@@ -6,7 +6,7 @@
 extern "C" unsigned long millis();
 extern int obtain(uint8_t *data);
 
-typedef void (*callback_t) (ProtocolParser::message_parse_result_t, ProtocolParser::message_t, const uint8_t *, uint8_t);
+typedef void (*callback_t) (ProtocolParser::status_t, ProtocolParser::message_t, const uint8_t *, uint8_t);
 #define SENSOR_PROTOCOL_DEBUG ((x)) while {} do(0)
 //#define SENSOR_PROTOCOL_DEBUG ((x)) printf((x))
 class SensorProtocol
@@ -33,7 +33,7 @@ class SensorProtocol
   /* commands */
   static constexpr time_t WATCHDOG_TIME = 1000;
   time_t last_peting;
-  ProtocolParser2 parser;
+  ProtocolParser parser;
 
   // WITHOUT CRC8
 
@@ -118,7 +118,7 @@ class SensorProtocol
       }
     }};
 
-  void on_command(const ProtocolParser::message_parse_result_t result,
+  void on_command(const ProtocolParser::status_t result,
                   const ProtocolParser::message_t& msg,
                   const uint8_t* payload,
                   const uint8_t len)
