@@ -1,28 +1,8 @@
-#include <cstdint>
-#include <fsm.hpp>
+#if ARDUINO
+#include <Arduino.h>
+#endif
 #include <stdio.h>
-
-// [LENGTH][CONTENT][CRC8]
-
-uint8_t update_crc8(uint8_t *crc, const uint8_t *data, size_t length)
-{
-    while (length--) {
-        *crc ^= *data++;
-        for (uint8_t i = 0; i < 8; i++) {
-            if (*crc & 0x80) {
-                *crc = (*crc << 1) ^ 0x31; // CRC8 polynomial: x^8 + x^5 + x^4 + 1 (0x31)
-            } else {
-                *crc <<= 1;
-            }
-        }
-    }
-    return *crc;
-}
-
-uint8_t calc_crc8(const uint8_t* data, size_t length) {
-    uint8_t crc = 0xFF;
-    return update_crc8(&crc, data, length);
-}
+#include <crc8.h>
 
 class ProtocolParser
 {
@@ -32,6 +12,8 @@ class ProtocolParser
     GET_SENSOR_DATA,
     RET_SENSOR_DATA,
     RET_ERROR,
+    RET_OK,
+    GET_DETECT,
   };
 
   enum status_t : uint8_t
@@ -43,7 +25,7 @@ class ProtocolParser
     TIMEOUT,
   };
 
-  static constexpr const char* result_name(status_t r)
+  static const char* result_name(status_t r)
   {
     switch (r) {
       case INVALID_MSG_ID:
@@ -104,6 +86,9 @@ class ProtocolParser
     }
     else
     {
+      #ifndef ARDUINO
+      printf("%02X vs %02X\n", data, crc8);
+      #endif
       message_status = status_t::INVALID_CRC;
     }
 
@@ -143,5 +128,4 @@ class ProtocolParser
   {
     return message_status;
   }
-
 };

@@ -1,9 +1,29 @@
 #include "ProtocolParser.hpp"
-#include <cstdint>
-#include <fsm.hpp>
-#include <functional>
+#if ARDUINO
+#include <Arduino.h>
+#else
 
-extern "C" unsigned long millis();
+class Stream
+{
+  public:
+  void print(const char* s){
+    printf("%s", s);
+  }
+  void print(const uint8_t d)
+  {
+    printf("%d", d);
+  }
+  void println(const char* s)
+  {
+    printf("%s\n", s);
+  }
+  void println(const int n)
+  {
+    printf("%d\n", n);
+  }
+};
+extern unsigned long millis();
+#endif
 extern int obtain(uint8_t *data);
 
 typedef void (*callback_t) (ProtocolParser::status_t, ProtocolParser::message_t, const uint8_t *, uint8_t);
@@ -12,6 +32,7 @@ typedef void (*callback_t) (ProtocolParser::status_t, ProtocolParser::message_t,
 class SensorProtocol
 {
   private:
+  Stream &debug;
   /* watchdog */
   enum watchdog_event_t : uint8_t
   {
@@ -28,15 +49,16 @@ class SensorProtocol
     BAKRING,
   };
 
-  using fsm_watchdog_t = fsm::statemachine<watchdog_event_t, watchdog_state_t>;
 
   /* commands */
-  static constexpr time_t WATCHDOG_TIME = 1000;
-  time_t last_peting;
+  static constexpr unsigned long WATCHDOG_TIME = 1000;
+  unsigned long last_peting;
   ProtocolParser parser;
+  watchdog_state_t state = SLEEPING;
 
   // WITHOUT CRC8
-
+#if 0
+  using fsm_watchdog_t = fsm::statemachine<watchdog_event_t, watchdog_state_t>;
   fsm_watchdog_t fsm_watchdog = {
     .state = SLEEPING,
     .transitions =       {
@@ -55,11 +77,11 @@ class SensorProtocol
           .target = BAKRING,
           .transit = [this](auto, auto, auto)
           {
-             printf("BARKING \n");
+            //  printf("BARKING \n");
              fsm_watchdog(RESET);
              // Should it be event on it's own? Or just hard reset
              // by hand?
-             printf("!! RESET TO INIT !!\n");
+            //  printf("!! RESET TO INIT !!\n");
              parser.reset();
 
              on_command(ProtocolParser::TIMEOUT, parser.message(), nullptr, 0);
@@ -113,36 +135,87 @@ class SensorProtocol
 
       if (accepted != ProtocolParser::feed_result_t::NEED_MORE)
       {
-        printf("ANUS %d\n", static_cast<int>(accepted));
         on_command(parser.msg_status(), parser.message(), parser.buffer(), parser.msg_len());
       }
     }};
-
+#endif 
   void on_command(const ProtocolParser::status_t result,
                   const ProtocolParser::message_t& msg,
                   const uint8_t* payload,
                   const uint8_t len)
   {
-    printf("Parsed message: result=%s msg=%d, payload=%d\n",
-           ProtocolParser::result_name(result),
-           msg,
-           len);
-           if (message_callback)
-           {
-            message_callback(result, msg, payload, len);
-           }
+    debug.print("Parsed messag: result=");
+    debug.print(result);
+    debug.print(" msg=");
+    debug.print(msg);
+    debug.print(" payload=");
+    debug.println(len);
+    if (message_callback)
+    {
+      message_callback(result, msg, payload, len);
+    }
   }
 public:
+
+SensorProtocol(Stream &debug_output): debug(debug_output)
+{
+}
 
   using message_t = ProtocolParser::message_t;
   // using event_t = uint8_t;
   callback_t message_callback{nullptr};
 
   void tick() {
-    fsm_watchdog(TICK);
+    if (state != AWAKE)
+    {
+      return;
+    }
+
+    if (millis() - last_peting > WATCHDOG_TIME)
+    {
+      state = BAKRING;
+      //  printf("BARKING \n");
+      // Should it be event on it's own? Or just hard reset
+      // by hand?
+      //  printf("!! RESET TO INIT !!\n");
+      parser.reset();
+
+      on_command(ProtocolParser::TIMEOUT, parser.message(), nullptr, 0);
+      state = SLEEPING;
+    }
   }
+
   void has_data()
   {
-    fsm_watchdog(HAS_DATA);
+    state = AWAKE;
+
+    last_peting = millis();
+
+    uint8_t last_data;
+
+    obtain(&last_data);
+
+    auto accepted = parser.feed(last_data);
+
+    debug.print("Has data: ");
+    debug.print(last_data);
+    debug.print(" accepted: ");
+    debug.println((int)accepted);
+
+    if (accepted == ProtocolParser::feed_result_t::PARSED)
+    {
+      //  printf("accepted && received\n");
+      state = SLEEPING;
+    }
+    else if (accepted == ProtocolParser::feed_result_t::ERROR)
+    {
+      //  printf("accepted && init\n");
+      state = SLEEPING;
+    }
+
+    if (accepted != ProtocolParser::feed_result_t::NEED_MORE)
+    {
+      on_command(parser.msg_status(), parser.message(), parser.buffer(), parser.msg_len());
+    }
   }
 };
