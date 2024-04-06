@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 #include <array>
+#include <TaskScheduler.h>
 
 #ifdef ARDUINO_ARCH_LGT
 
@@ -42,7 +43,15 @@ enum BANK_T : uint8_t {
 
 static void fetch_values(float *temp, float *hum, float *pressure);
 static uint8_t detect_sensor();
+static void led_on()
+{
+  digitalWrite(LED_BUILTIN, HIGH);
+}
 
+static void led_off()
+{
+  digitalWrite(LED_BUILTIN, LOW);
+}
 
 // HardwareSerial &SerialDebug = Serial;
 SoftwareSerial SerialDebug = SoftwareSerial(DEBUG_RX, DEBUG_TX);
@@ -51,7 +60,26 @@ static SensorProtocol prot_handler(SerialDebug);
 
 static fetch_func_t extra_fetch = nullptr;
 
-unsigned long last_forced;
+static Scheduler scheduler {};
+
+static Task task_forced_measure{TASK_SECOND * 10, TASK_FOREVER, []() {
+  float tmp;
+  fetch_values(&tmp, &tmp, &tmp);
+},
+&scheduler};
+
+static Task task_led_blink {TASK_SECOND / 4, TASK_FOREVER, [](){
+  if (task_led_blink.getRunCounter()&1)
+  {
+    // 1, 3, ...
+    led_on();
+  }
+  else
+  {
+    // 0, 2, 4, ...
+    led_off();
+  }
+}, &scheduler};
 
 
 #if WIRE_LIB == WITH_SOFTWIRE
@@ -112,13 +140,13 @@ extern int obtain(uint8_t *data)
 
 static void emit_error()
 {
-  const constexpr static uint8_t err_msg[] = {0x01 /* length 1*/, ProtocolParser::RET_ERROR /* id */, 0x12 /* CRC8 */};
+  const constexpr static uint8_t err_msg[] = {0x01 /* length 1*/, ProtocolParser::RET_ERROR /* id */, 0x74 /* CRC8 */};
   Serial.write(err_msg, sizeof(err_msg));
   Serial.flush();
 }
 static void emit_ok()
 {
-  const constexpr static uint8_t ok_msg[] = {0x01 /* length 1*/, ProtocolParser::RET_OK /* id */, 0x4F /* CRC8 */};
+  const constexpr static uint8_t ok_msg[] = {0x01 /* length 1*/, ProtocolParser::RET_OK /* id */, 0xA1 /* CRC8 */};
   Serial.write(ok_msg, sizeof(ok_msg));
   Serial.flush();
 }
@@ -171,7 +199,7 @@ static void message_callback(ProtocolParser::status_t result, ProtocolParser::me
     tmp.temp = temp;
     tmp.hum = hum;
     tmp.pres = pres;
-    tmp.crc8 = calc_crc8(reinterpret_cast<uint8_t*>(&tmp), sizeof(tmp) - 1);
+    tmp.crc8 = crc8_dvb_s2(reinterpret_cast<uint8_t*>(&tmp), sizeof(tmp) - 1);
 
     Serial.write(reinterpret_cast<uint8_t*>(&tmp), sizeof(tmp));
     Serial.flush();
@@ -188,6 +216,9 @@ static void message_callback(ProtocolParser::status_t result, ProtocolParser::me
 static uint8_t detect_sensor()
 {
   SerialDebug.println("Start detecting sensors");
+
+  task_led_blink.disable();
+  led_on();
 
   // at ic0 can only be aht20 (it's bmp280+aht20 combo)
   // so check for aht30 and then aht20 on ic1
@@ -232,9 +263,15 @@ static uint8_t detect_sensor()
     }
   }
 
+  uint8_t detected_sensors = 0;
+
   if (extra_fetch == nullptr)
   {
     SerialDebug.println("AHTx0: not found");
+  }
+  else
+  {
+    ++detected_sensors;
   }
 
   // bmp280 can only be on bank0 (bmp280 + aht20 combo)
@@ -242,14 +279,24 @@ static uint8_t detect_sensor()
   {
     SerialDebug.println("BMP280: not found");
     deinit_bmp280();
-
-    return extra_fetch == nullptr ? 0 : 1;
   }
   else
   {
+    ++detected_sensors;
     SerialDebug.println("BMP280: ok");
-    return extra_fetch == nullptr ? 1 : 2;
   }
+
+  if (detected_sensors == 2)
+  {
+    led_off();
+  }
+  else if (detected_sensors == 1)
+  {
+    task_led_blink.enable();
+  }
+  // keep led on otherwise
+
+  return detected_sensors;
 }
 
 void setup()
@@ -266,6 +313,8 @@ void setup()
   }
 
   delay(100);
+
+  // task_forced_measure.enable();
 
   detect_sensor();
 }
@@ -287,6 +336,18 @@ static void fetch_values(float *temp, float *hum, float *pressure)
     SerialDebug.println("No AHTx0 data");
   }
 
+  if (*temp == NAN || *hum == NAN || *pressure == NAN)
+  {
+    // Start blinking if NAN is received
+    task_led_blink.enable();
+  }
+  else
+  {
+    // Stop blinking if all ok
+    led_off();
+    task_led_blink.disable();
+  }
+
   SerialDebug.print(millis());
   SerialDebug.print(" t=");
   SerialDebug.print(*temp);
@@ -298,17 +359,12 @@ static void fetch_values(float *temp, float *hum, float *pressure)
 
 void loop()
 {
+  scheduler.execute();
+
   if (Serial.available() > 0) {
     prot_handler.has_data();
   } else {
     prot_handler.tick();
     delay(1);
   }
-
-
-  // if (millis() - last_forced > 10000) {
-  //   last_forced = millis();
-  //   float a, b, c;
-  //   fetch_values(&a, &b, &c);
-  // }
 }
