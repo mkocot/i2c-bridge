@@ -3,65 +3,32 @@
 
 #include <driver_bmp280.h>
 
-static bmp280_handle_t *bmp280 = nullptr;
-static SoftWire *software_ic_current = nullptr;
-static uint8_t bmp280_interface_iic_write(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
-{
-
-  software_ic_current->beginTransmission(addr >> 1);
-
-  auto w = software_ic_current->write(reg);
-  if (len != 0) {
-    w += software_ic_current->write(buf, len);
-  }
-  software_ic_current->endTransmission();
-
-  return w != (len + 1u);
-}
-
-
-static uint8_t bmp280_interface_iic_read(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
-{
-
-  if (bmp280_interface_iic_write(addr, reg, nullptr, 0))
-  {
-    return -1;
-  }
-
-  // // return i2c_read(addr >> 1, buf, len);
-
-  auto r = software_ic_current->requestFrom((int)(addr >> 1), (int)len);
-  auto d = software_ic_current->readBytes(buf, len);
-  return d != len;
-}
-
 static uint8_t noop_spi(uint8_t x, uint8_t *xx, uint16_t xxx)
 {
   return 0;
 }
 
-void deinit_bmp280()
+Bmp280::~Bmp280()
 {
-    if (bmp280 == nullptr)
-    {
-        return;
-    }
+  if (bmp280 == nullptr)
+  {
+    return;
+  }
 
-    bmp280_deinit(bmp280);
+  end();
 
-    delete bmp280;
+  delete bmp280;
 
-    bmp280 = nullptr;
-
-    software_ic_current = nullptr;
+  bmp280 = nullptr;
 }
 
-uint8_t bmp280_probe(SoftWire *sw)
+uint8_t Bmp280::end()
 {
-  software_ic_current = sw;
+  return bmp280_deinit(bmp280);
+}
 
-  init_bmp280();
-
+uint8_t Bmp280::begin()
+{
   bmp280_deinit(bmp280);
 
   if (bmp280_init(bmp280) != 0)
@@ -77,32 +44,20 @@ uint8_t bmp280_probe(SoftWire *sw)
   return 0;
 }
 
-uint8_t bmp280_fetch(float *temp, float *pressure)
+uint8_t Bmp280::t_and_h(float *temp, float *pressure)
 {
-    static uint32_t buffer;
-
-    if (bmp280 == nullptr)
-    {
-        return 1;
-    }
-
-    return bmp280_read_temperature_pressure(bmp280, &buffer, temp, &buffer, pressure);
+  return bmp280_read_temperature_pressure(bmp280, &buffer, temp, &buffer, pressure);
 }
 
-void init_bmp280()
+Bmp280::Bmp280():
+  bmp280(new bmp280_handle_t)
 {
-  if (bmp280 != nullptr)
-  {
-    return;
-  }
-
-  bmp280 = new bmp280_handle_t;
   DRIVER_BMP280_LINK_INIT(bmp280, bmp280_handle_t);
 
   DRIVER_BMP280_LINK_IIC_INIT(bmp280, dummy_uint8_t_no_op);
   DRIVER_BMP280_LINK_IIC_DEINIT(bmp280, dummy_uint8_t_no_op);
-  DRIVER_BMP280_LINK_IIC_READ(bmp280, bmp280_interface_iic_read);
-  DRIVER_BMP280_LINK_IIC_WRITE(bmp280, bmp280_interface_iic_write);
+  DRIVER_BMP280_LINK_IIC_READ(bmp280, generic_i2c_read_reg_cmd);
+  DRIVER_BMP280_LINK_IIC_WRITE(bmp280, generic_i2c_write_reg_cmd);
 
   DRIVER_BMP280_LINK_SPI_INIT(bmp280, dummy_uint8_t_no_op);
   DRIVER_BMP280_LINK_SPI_DEINIT(bmp280, dummy_uint8_t_no_op);
