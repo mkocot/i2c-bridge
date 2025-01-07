@@ -39,10 +39,18 @@ struct i2c_op_t
   i2c_write_op write;
 };
 
-
 class Sensor
 {
 public:
+  enum SensorType : uint8_t
+  {
+    NONE = 0,
+    SHTxx = 1 << 0,
+    SHTCx = 1 << 1,
+    BMP280 = 1 << 2,
+    BME280 = 1 << 3,
+    AHTxx = 1 << 4,
+  };
   Sensor() = default;
   virtual ~Sensor() = default;
   // virtual float temperature() { return 0; };
@@ -51,18 +59,38 @@ public:
   virtual uint8_t begin();
   virtual uint8_t end();
   virtual uint8_t t_and_h(float *t, float *h);
+  virtual constexpr const SensorType sensor_id() const;
 };
+
+typedef enum scl_bank_e : uint8_t
+{
+  SCL_BANK_0 = D2,
+  SCL_BANK_1 = D3,
+  SCL_BANK_2 = D5,
+  SCL_BANK_3 = D6,
+  SCL_BANK_4 = D7,
+} scl_bank_t;
+
+typedef enum sda_bank_e : uint8_t
+{
+  SDA_BANK_O = D4,
+  SDA_BANK_1 = D4,
+  SDA_BANK_2 = D4,
+  SDA_BANK_3 = D4,
+  SDA_BANK_4 = D4,
+} sda_bank_t;
+
 
 struct bank_t
 {
-  uint8_t sda : 4;
-  uint8_t scl : 4;
+  sda_bank_t sda : 4;
+  scl_bank_t scl : 4;
 
-  roo_collections::FlatSmallHashSet<Sensor*> sensors {};
+  roo_collections::FlatSmallHashSet<Sensor *> sensors{};
 
-  bank_t(uint8_t sda, uint8_t scl):
-  sda(sda), scl(scl)
-  {}
+  bank_t(sda_bank_t sda, scl_bank_t scl) : sda(sda), scl(scl)
+  {
+  }
 
   void begin()
   {
@@ -119,7 +147,7 @@ static uint8_t generic_i2c_write_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
 }
 
 // TODO(m): Check if this is "generic" or "bmp" specific
-template<typename reg_t = uint8_t>
+template <typename reg_t = uint8_t>
 static uint8_t generic_i2c_write_reg_cmd(uint8_t addr, reg_t reg, uint8_t *buf, uint16_t len)
 {
 
@@ -133,8 +161,9 @@ static uint8_t generic_i2c_write_reg_cmd(uint8_t addr, reg_t reg, uint8_t *buf, 
   //   Serial.println(reg);
   // }
 
-  auto w = Wire.write(reinterpret_cast<uint8_t*>(&reg), sizeof(reg_t));
-  if (len != 0) {
+  auto w = Wire.write(reinterpret_cast<uint8_t *>(&reg), sizeof(reg_t));
+  if (len != 0)
+  {
     w += Wire.write(buf, len);
   }
 
@@ -146,7 +175,7 @@ static uint8_t generic_i2c_write_reg_cmd(uint8_t addr, reg_t reg, uint8_t *buf, 
   return w != (len + sizeof(reg_t));
 }
 
-template<typename reg_t = uint8_t>
+template <typename reg_t = uint8_t>
 static uint8_t generic_i2c_read_reg_cmd(uint8_t addr, reg_t reg, uint8_t *buf, uint16_t len)
 {
 

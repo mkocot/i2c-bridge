@@ -19,6 +19,10 @@ class Aht3x : public Sensor
     // virtual float temperature();
     // virtual float humidity();
     uint8_t t_and_h(float *t, float *h);
+    virtual constexpr const SensorType sensor_id() const
+    {
+        return AHTxx;
+    }
 };
 
 #endif

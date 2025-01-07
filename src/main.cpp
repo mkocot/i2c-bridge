@@ -14,9 +14,12 @@
 #include <Wire.h>
 #include <FlexWire.h>
 #include <SHTSensor.h>
+#include <LinkedList.h>
 
 #define WITH_SOFTWIRE 1
 #define WITH_WIRE 2
+
+constexpr auto BANKS = 4;
 
 constexpr auto DEBUG_RX = A6;
 constexpr auto DEBUG_TX = A7;
@@ -27,6 +30,15 @@ constexpr auto PROTO_BAUND = 9600;
 // For early debug purpose, reuse normal serial
 using fetch_func_t = uint8_t (*)(float *, float *);
 
+typedef struct
+{
+  float temp;
+  float hum;
+  float pres;
+} reading_t;
+
+using reading_container_t = std::array<reading_t, 5>;
+
 enum BANK_T : uint8_t
 {
   BANK_0 = 0,
@@ -35,33 +47,15 @@ enum BANK_T : uint8_t
   BANK_3 = 3,
 };
 
-enum SCL_BANK_T : uint8_t
-{
-  SCL_BANK_0 = D2,
-  SCL_BANK_1 = D3,
-  SCL_BANK_2 = D5,
-  SCL_BANK_3 = D6,
-  SCL_BANK_4 = D7,
-};
-
-enum SDA_BANK_T : uint8_t
-{
-  SDA_BANK_O = D4,
-  SDA_BANK_1 = D4,
-  SDA_BANK_2 = D4,
-  SDA_BANK_3 = D4,
-  SDA_BANK_4 = D4,
-};
-
-std::array<bank_t, 5> software_i2c = {
+std::array<bank_t, BANKS> software_i2c = {
     bank_t{SDA_BANK_O, SCL_BANK_0},
     bank_t{SDA_BANK_1, SCL_BANK_1},
     bank_t{SDA_BANK_2, SCL_BANK_2},
     bank_t{SDA_BANK_3, SCL_BANK_3},
-    bank_t{SDA_BANK_4, SCL_BANK_4},
+    // bank_t{SDA_BANK_4, SCL_BANK_4},
 };
 
-static void fetch_values(float *temp, float *hum, float *pressure);
+static void fetch_values(LinkedList<reading_t> &readings);
 static uint8_t detect_sensor();
 static void led_on()
 {
@@ -73,6 +67,7 @@ static void led_off()
   digitalWrite(LED_BUILTIN, LOW);
 }
 
+/* initialize "Wire" to custom FlexiWire */
 TwoWire Wire{};
 
 HardwareSerial &SerialDebug = Serial;
@@ -80,20 +75,19 @@ HardwareSerial &SerialDebug = Serial;
 
 static SensorProtocol prot_handler(SerialDebug);
 
-static fetch_func_t extra_fetch = nullptr;
-
 static Scheduler scheduler{};
 
 static Aht2x aht2x{};
 static Aht3x aht3x{};
 static Bmp280 bmp280{};
-static Sht3x sht3x{};
-static Sht4x sht4x{};
+static Shtxx<SHTSensor::SHT3X> sht3x{};
+static Shtxx<SHTSensor::SHT4X> sht4x{};
+static Shtxx<SHTSensor::SHTC3> shtc3{};
 
 static Task task_forced_measure{TASK_SECOND * 10, TASK_FOREVER, []()
                                 {
-                                  float tmp;
-                                  fetch_values(&tmp, &tmp, &tmp);
+                                  static LinkedList<reading_t> tmp;
+                                  fetch_values(tmp);
                                 },
                                 &scheduler};
 
@@ -184,30 +178,39 @@ static void message_callback(ProtocolParser::status_t result, ProtocolParser::me
   // GET_SENSOR_DATA
   if (cmd == ProtocolParser::GET_SENSOR_DATA)
   {
-    struct message_frame
+    // message:
+    //   uint8_t msg_len
+    //   uint8_t msg_id = ProtocolParser::RET_SENSOR_DATA;
+    //   reading_container_t readings;
+    //   uint8_t crc8;
+    // } __attribute__((packed));
+
+    // static_assert(sizeof(std::array<std::array<float, 3>, 5>) == 3 * 4 * 5, "XX");
+    // static_assert(sizeof(message_frame) == 15, "X");
+
+    // message_frame tmp{};
+
+    static LinkedList<reading_t> readings;
+    fetch_values(readings);
+
+    /* WITHOUT CRC8 */
+    uint8_t message_len = 1 + sizeof(float) * 3 * readings.size();
+    Serial.write(&message_len, 1);
+    uint8_t crc8 = crc8_dvb_s2(&message_len, 1);
+
+    uint8_t tmp = ProtocolParser::RET_SENSOR_DATA;
+    Serial.write(&tmp, 1);
+    crc8 = crc8_dvb_s2_stream(crc8, &tmp, 1);
+
+    while (readings.size())
     {
-      uint8_t msg_len = sizeof(float) * 3 + 1;
-      uint8_t msg_id = ProtocolParser::RET_SENSOR_DATA;
-      float temp;
-      float hum;
-      float pres;
-      uint8_t crc8;
-    } __attribute__((packed));
+      auto r = readings.shift();
 
-    static_assert(sizeof(message_frame) == 15, "X");
+      Serial.write(reinterpret_cast<uint8_t *>(&r), sizeof(r));
+      crc8 = crc8_dvb_s2_stream(crc8, reinterpret_cast<uint8_t *>(&r), sizeof(r));
+    }
 
-    float temp, hum, pres;
-
-    fetch_values(&temp, &hum, &pres);
-
-    message_frame tmp{};
-
-    tmp.temp = temp;
-    tmp.hum = hum;
-    tmp.pres = pres;
-    tmp.crc8 = crc8_dvb_s2(reinterpret_cast<uint8_t *>(&tmp), sizeof(tmp) - 1);
-
-    Serial.write(reinterpret_cast<uint8_t *>(&tmp), sizeof(tmp));
+    Serial.write(&crc8, 1);
     Serial.flush();
 
     return;
@@ -308,14 +311,6 @@ static uint8_t detect_sensor()
   task_led_blink.disable();
   led_on();
 
-  // at ic0 can only be aht20 (it's bmp280+aht20 combo)
-  // so check for aht30 and then aht20 on ic1
-
-  extra_fetch = nullptr;
-  // deinit_aht20();
-  // deinit_aht30();
-  // deinit_bmp280();
-
   // 0 1 4 2 3
   // 56  - AHTxx
   // 68  - SHT3x / SHT4x
@@ -325,6 +320,7 @@ static uint8_t detect_sensor()
 
   // 89  - Gas sensor (VOC)
 
+  uint8_t detected = 0;
   uint8_t bank_id = 0;
   for (auto &bank : software_i2c)
   {
@@ -352,6 +348,7 @@ static uint8_t detect_sensor()
         /* does it has aht30 or aht20 ? */
         if (bank.has(aht2x) || bank.has(aht3x))
         {
+          ++detected;
           SerialDebug.println("AHT[2|3]x already added");
           break;
         }
@@ -376,6 +373,7 @@ static uint8_t detect_sensor()
       case sensor_id_t::BMP280:
         if (bank.has(bmp280))
         {
+          ++detected;
           SerialDebug.println("BMP already added");
           break;
         }
@@ -393,12 +391,35 @@ static uint8_t detect_sensor()
         SerialDebug.println("BME280 detected *unsupported");
         break;
       case sensor_id_t::SHTCx:
-        SerialDebug.println("SHTCx detected *unsupported");
+        if (bank.has(shtc3))
+        {
+          ++detected;
+          SerialDebug.println("SHTC3 already known");
+          break;
+        }
+        if (!shtc3.begin())
+        {
+          SerialDebug.println("SHTCx detected");
+          sensor = &shtc3;
+        }
+        else
+        {
+          SerialDebug.println("Initializing SHTC3 failed");
+        }
         break;
       case sensor_id_t::SHTxx:
         if (bank.has(sht3x) || bank.has(sht4x))
         {
+          ++detected;
           SerialDebug.println("SHTxx already known");
+          break;
+        }
+
+        /* see sensiron source why this order is important */
+        if (!sht4x.begin())
+        {
+          SerialDebug.println("SHT4x detected");
+          sensor = &sht4x;
           break;
         }
 
@@ -406,13 +427,6 @@ static uint8_t detect_sensor()
         {
           SerialDebug.println("SHT3x detected");
           sensor = &sht3x;
-          break;
-        }
-
-        if (!sht4x.begin())
-        {
-          SerialDebug.println("SHT4x detected");
-          sensor = &sht4x;
           break;
         }
 
@@ -430,83 +444,16 @@ static uint8_t detect_sensor()
         continue;
       }
 
+      ++detected;
       SerialDebug.println("Inserint sensor");
 
       bank.sensors.insert(sensor);
     }
 
     ++bank_id;
-
-#if 0
-    if (bank == BANK_1)
-    {
-      // 1) Check AHT30 (and deinit on failure)
-      if(aht30_probe(&ic) == 0)
-      {
-        extra_fetch = aht30_fetch;
-        SerialDebug.print("AHT30: at ");
-        SerialDebug.println(bank);
-        // Found AHT30, exit loop
-        break;
-      }
-      // AHT30 can only be on BANK_1
-      // deinit if not found
-      deinit_aht30();
-    }
-
-    // 2) Check AHT20
-    if (aht20_probe(&ic) == 0)
-    {
-      extra_fetch = aht20_fetch;
-      SerialDebug.print("AHT20: at ");
-      SerialDebug.println(bank);
-      break;
-    }
-    else if (bank == BANK_0)
-    {
-      // Deinit AHT20 if not found
-      deinit_aht20();
-    }
-#endif
-  }
-#if 0
-  uint8_t detected_sensors = 0;
-
-  if (extra_fetch == nullptr)
-  {
-    SerialDebug.println("AHTx0: not found");
-  }
-  else
-  {
-    ++detected_sensors;
   }
 
-  // bmp280 can only be on bank0 (bmp280 + aht20 combo)
-  if (bmp280_probe(&getBank(BANK_0)) != 0)
-  {
-    SerialDebug.println("BMP280: not found");
-    deinit_bmp280();
-  }
-  else
-  {
-    ++detected_sensors;
-    SerialDebug.println("BMP280: ok");
-  }
-
-  if (detected_sensors == 2)
-  {
-    led_off();
-  }
-  else if (detected_sensors == 1)
-  {
-    task_led_blink.enable();
-  }
-  // keep led on otherwise
-
-  return detected_sensors;
-#endif
-
-  return 1;
+  return !detected;
 }
 
 void setup()
@@ -523,104 +470,63 @@ void setup()
     delay(100);
   }
 
-  software_i2c[BANK_2].begin();
-
   delay(100);
 
-  SHTSensor sensor{SHTSensor::AUTO_DETECT};
-
-  while (1)
-  {
-    // Reset sensor type to prevent stucking in first-detected sensor
-    sensor.mSensorType = SHTSensor::AUTO_DETECT;
-    if (!sensor.init())
-    {
-      Serial.println("init failed");
-    }
-    else
-    {
-
-    Serial.print("Sensor type: ");
-    Serial.println(sensor.mSensorType);
-
-    if (sensor.readSample())
-    {
-
-    float h = sensor.getHumidity();
-    float t = sensor.getTemperature();
-    Serial.print(h);
-    Serial.print(" ");
-    Serial.println(t);
-    }
-    else
-    {
-      Serial.println("reading sample failed");
-    }
-    }
-
-    delay(10000);
-    
-  }
-  
-
-  // task_forced_measure.enable();
-
-  while (1)
-  {
-    detect_sensor();
-    for (int i = 0; i < software_i2c.size(); ++i)
-    {
-      auto &bank = software_i2c[i];
-      if (bank.sensors.empty())
-      {
-        SerialDebug.print("Bank ");
-        SerialDebug.print(i);
-        SerialDebug.println(" is empty");
-        continue;
-      }
-      bank.begin();
-
-      float t, h;
-      for (auto s : bank.sensors)
-      {
-        if (s->t_and_h(&t, &h))
-        {
-          SerialDebug.println("Error with sensor, deinit");
-          s->end();
-          bank.sensors.erase(s);
-          continue;
-        }
-        SerialDebug.print("Bank ");
-        SerialDebug.print(i);
-        SerialDebug.print(" data: ");
-        SerialDebug.print(t);
-        SerialDebug.print(" ");
-        SerialDebug.println(h);
-      }
-    }
-    SerialDebug.println("BLOCKED START");
-    delay(10000);
-  }
+  detect_sensor();
+  task_forced_measure.enable();
 }
 
-static void fetch_values(float *temp, float *hum, float *pressure)
+static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float *hum, float *pressure)
 {
-  *temp = NAN;
-  *hum = NAN;
+  readings.clear();
 
-  // if (bmp280_fetch(temp, pressure) != 0)
-  // {
-  //   SerialDebug.println("No BMP data");
-  //   // try detecing sensors?
-  //   *pressure = NAN;
-  // }
-
-  if (extra_fetch != nullptr && extra_fetch(temp, hum))
+  for (auto &bank : software_i2c)
   {
-    SerialDebug.println("No AHTx0 data");
-  }
+    if (bank.sensors.empty())
+    {
+      continue;
+    }
 
-  if (*temp == NAN || *hum == NAN || *pressure == NAN)
+    bank.begin();
+
+    for (auto &s : bank.sensors)
+    {
+      reading_t r{NAN, NAN, NAN};
+      uint8_t result = 1;
+      if (s->sensor_id() == Sensor::BMP280)
+      {
+        // t_and_h will return temperature and pressure
+        result = s->t_and_h(&r.temp, &r.pres);
+      }
+      else
+      {
+        result = s->t_and_h(&r.temp, &r.hum);
+      }
+
+      if (result)
+      {
+        bank.sensors.erase(s);
+        SerialDebug.print("Erase sensor");
+        SerialDebug.println(s->sensor_id());
+
+        continue;
+      }
+
+      SerialDebug.print(millis());
+      SerialDebug.print(" t=");
+      SerialDebug.print(r.temp);
+      SerialDebug.print(" h=");
+      SerialDebug.print(r.hum);
+      SerialDebug.print(" p=");
+      SerialDebug.println(r.pres);
+
+      readings.add(r);
+    }
+  }
+  // now attempt to read PT100@SPI
+  // TODO(m): PT100 reading
+
+  if (!readings.size())
   {
     // Start blinking if NAN is received
     task_led_blink.enable();
@@ -631,14 +537,6 @@ static void fetch_values(float *temp, float *hum, float *pressure)
     led_off();
     task_led_blink.disable();
   }
-
-  SerialDebug.print(millis());
-  SerialDebug.print(" t=");
-  SerialDebug.print(*temp);
-  SerialDebug.print(" h=");
-  SerialDebug.print(*hum);
-  SerialDebug.print(" p=");
-  SerialDebug.println(*pressure);
 }
 
 void loop()
