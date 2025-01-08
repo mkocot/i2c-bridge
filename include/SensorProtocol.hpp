@@ -1,4 +1,9 @@
+#ifndef I2C_BRIDGE_SENSOR_PROTOCOL_H
+#define I2C_BRIDGE_SENSOR_PROTOCOL_H
+
+#include "config.hpp"
 #include "ProtocolParser.hpp"
+
 #if ARDUINO
 #include <Arduino.h>
 #else
@@ -32,7 +37,6 @@ typedef void (*callback_t) (ProtocolParser::status_t, ProtocolParser::message_t,
 class SensorProtocol
 {
   private:
-  Stream &debug;
   /* watchdog */
   enum watchdog_event_t : uint8_t
   {
@@ -144,12 +148,8 @@ class SensorProtocol
                   const uint8_t* payload,
                   const uint8_t len)
   {
-    debug.print("Parsed messag: result=");
-    debug.print(result);
-    debug.print(" msg=");
-    debug.print(msg);
-    debug.print(" payload=");
-    debug.println(len);
+    debug_println("Parsed messag: result=", result, " msg=", msg, " payload=", len);
+
     if (message_callback)
     {
       message_callback(result, msg, payload, len);
@@ -157,7 +157,7 @@ class SensorProtocol
   }
 public:
 
-SensorProtocol(Stream &debug_output): debug(debug_output)
+SensorProtocol()
 {
 }
 
@@ -197,10 +197,7 @@ SensorProtocol(Stream &debug_output): debug(debug_output)
 
     auto accepted = parser.feed(last_data);
 
-    debug.print("Has data: ");
-    debug.print(last_data);
-    debug.print(" accepted: ");
-    debug.println((int)accepted);
+    debug_println("Has data: ", last_data, " accepted: ", (int)accepted);
 
     if (accepted == ProtocolParser::feed_result_t::PARSED)
     {
@@ -219,3 +216,5 @@ SensorProtocol(Stream &debug_output): debug(debug_output)
     }
   }
 };
+
+#endif

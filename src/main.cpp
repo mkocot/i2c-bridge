@@ -1,23 +1,28 @@
 
 #include "aht20.hpp"
 #include "aht30.hpp"
+#include <bank.hpp>
 #include "bmp280.hpp"
+#include "common_driver.hpp"
+#include "config.hpp"
 #include "shtxx.hpp"
 
+#include <Adafruit_MAX31865.h>
 #include <Arduino.h>
 #include <array>
+#include <FlexWire.h>
+#include <LinkedList.h>
 #include <SensorProtocol.hpp>
 #include <SoftwareSerial.h> /* for debug output */
+#include <SHTSensor.h>
 // #include <SoftWire.h>
 #include <TaskScheduler.h>
 #include <PrintEx.h>
 #include <Wire.h>
-#include <FlexWire.h>
-#include <SHTSensor.h>
-#include <LinkedList.h>
 
 #define WITH_SOFTWIRE 1
 #define WITH_WIRE 2
+#define WITH_SENSOR_MUNCHING 1
 
 constexpr auto BANKS = 4;
 
@@ -27,25 +32,12 @@ constexpr auto DEBUG_TX = A7;
 constexpr auto DEBUG_BAUND = 9600;
 constexpr auto PROTO_BAUND = 9600;
 
-// For early debug purpose, reuse normal serial
-using fetch_func_t = uint8_t (*)(float *, float *);
-
 typedef struct
 {
   float temp;
   float hum;
   float pres;
 } reading_t;
-
-using reading_container_t = std::array<reading_t, 5>;
-
-enum BANK_T : uint8_t
-{
-  BANK_0 = 0,
-  BANK_1 = 1,
-  BANK_2 = 2,
-  BANK_3 = 3,
-};
 
 std::array<bank_t, BANKS> software_i2c = {
     bank_t{SDA_BANK_O, SCL_BANK_0},
@@ -70,26 +62,32 @@ static void led_off()
 /* initialize "Wire" to custom FlexiWire */
 TwoWire Wire{};
 
-HardwareSerial &SerialDebug = Serial;
+#if X_DEBUG
+Stream &SerialDebug = Serial;
+#endif
 // SoftwareSerial SerialDebug = SoftwareSerial(DEBUG_RX, DEBUG_TX);
 
-static SensorProtocol prot_handler(SerialDebug);
-
+static SensorProtocol prot_handler{};
 static Scheduler scheduler{};
-
 static Aht2x aht2x{};
 static Aht3x aht3x{};
 static Bmp280 bmp280{};
 static Shtxx<SHTSensor::SHT3X> sht3x{};
 static Shtxx<SHTSensor::SHT4X> sht4x{};
 static Shtxx<SHTSensor::SHTC3> shtc3{};
+constexpr auto RNOMINAL = 100; // Ohm
+constexpr auto RREF = 430;     // Ohm
+static Adafruit_MAX31865 pt100{SS};
+static bool pt100_detected = false;
 
+#if WITH_SENSOR_MUNCHING
 static Task task_forced_measure{TASK_SECOND * 10, TASK_FOREVER, []()
                                 {
                                   static LinkedList<reading_t> tmp;
                                   fetch_values(tmp);
                                 },
                                 &scheduler};
+#endif
 
 static Task task_led_blink{TASK_SECOND / 4, TASK_FOREVER, []()
                            {
@@ -105,24 +103,6 @@ static Task task_led_blink{TASK_SECOND / 4, TASK_FOREVER, []()
                              }
                            },
                            &scheduler};
-
-// static uint8_t buf_ic[8]; // max payload is 7 bytes
-
-// /* extern */ FlexWire theSoftWire{SDA_BANK_O, SCL_BANK_0};
-static inline bool setupI2c();
-
-static bool setupI2c()
-{
-  // Reuse same buffer
-  // DON'T MIX BANK_X with BANK_Y
-  // DON'T INTERLEAVE READ in begin/end transmission
-
-  // Wire.setRxBuffer(buf_ic, sizeof(buf_ic));
-  // Wire.setTxBuffer(buf_ic, sizeof(buf_ic));
-  // Wire.setTimeout_ms(2000);
-
-  return true;
-}
 
 extern int obtain(uint8_t *data)
 {
@@ -152,7 +132,7 @@ static void emit_ok()
 }
 static void message_callback(ProtocolParser::status_t result, ProtocolParser::message_t cmd, const uint8_t *buff, uint8_t buff_len)
 {
-  SerialDebug.println("callback");
+  debug_println("callback");
   if (result != ProtocolParser::status_t::OK)
   {
     emit_error();
@@ -216,8 +196,7 @@ static void message_callback(ProtocolParser::status_t result, ProtocolParser::me
     return;
   }
 
-  SerialDebug.print("Unknown message: ");
-  SerialDebug.println(cmd);
+  debug_println("Unknown message: ", cmd);
 
   emit_error();
 }
@@ -304,9 +283,127 @@ static scan_result scan_i2c(FlexWire &sw, uint8_t from, uint8_t &found)
 
   return result;
 }
+
+enum class sensor_result_t: uint8_t
+{
+  NEW,
+  OLD,
+  ERROR,
+};
+
+static sensor_result_t obtain_sensor(uint8_t address, const bank_t &bank, Sensor **sensor)
+{
+  switch (static_cast<sensor_id_t>(address))
+  {
+  case sensor_id_t::AHTxx:
+    /* does it has aht30 or aht20 ? */
+    if (bank.has(aht2x) || bank.has(aht3x))
+    {
+      debug_println("AHT[2|3]x already added");
+      return sensor_result_t::OLD;
+    }
+
+    aht2x.end();
+    if (!aht2x.begin())
+    {
+      debug_println("AHT2x detected");
+      *sensor = &aht2x;
+
+      return sensor_result_t::NEW;
+    }
+
+    /* looks like i dont have this sensor on shelf */
+    aht3x.end();
+    if (!aht3x.begin())
+    {
+      debug_println("AHT3x detected");
+      *sensor = &aht3x;
+
+      return sensor_result_t::NEW;
+    }
+    
+    break;
+  case sensor_id_t::BMP280:
+    if (bank.has(bmp280))
+    {
+      debug_println("BMP already added");
+
+      return sensor_result_t::OLD;
+    }
+
+    bmp280.end();
+    if (!bmp280.begin())
+    {
+      debug_println("BMP280 detected");
+
+      *sensor = &bmp280;
+
+      return sensor_result_t::NEW;
+    }
+
+    debug_println("BMP280 add failed");
+
+    break;
+  case sensor_id_t::BME280:
+    debug_println("BME280 detected *unsupported");
+    break;
+  case sensor_id_t::SHTCx:
+    if (bank.has(shtc3))
+    {
+      debug_println("SHTC3 already known");
+
+      return sensor_result_t::OLD;
+    }
+
+    if (!shtc3.begin())
+    {
+      debug_println("SHTCx detected");
+      *sensor = &shtc3;
+
+      return sensor_result_t::NEW;
+    }
+    else
+    {
+      debug_println("Initializing SHTC3 failed");
+    }
+    break;
+  case sensor_id_t::SHTxx:
+    if (bank.has(sht3x) || bank.has(sht4x))
+    {
+      debug_println("SHTxx already known");
+      
+      return sensor_result_t::OLD;
+    }
+
+    /* see sensiron source why this order is important */
+    if (!sht4x.begin())
+    {
+      debug_println("SHT4x detected");
+
+      *sensor =  &sht4x;
+      
+      return sensor_result_t::NEW;
+    }
+
+    if (!sht3x.begin())
+    {
+      debug_println("SHT3x detected");
+      *sensor =  &sht3x;
+
+      return sensor_result_t::NEW;
+    }
+
+    debug_println("Initializing SHTXX failed");
+
+    break;
+  default:
+    return sensor_result_t::ERROR;
+  }
+}
+
 static uint8_t detect_sensor()
 {
-  SerialDebug.println("Start detecting sensors");
+  debug_println("Start detecting sensors");
 
   task_led_blink.disable();
   led_on();
@@ -328,124 +425,30 @@ static uint8_t detect_sensor()
 
     uint8_t address = 1;
 
-    SerialDebug.print("Start detecting ");
-    SerialDebug.print(bank_id);
-    SerialDebug.print(" ");
-    SerialDebug.println(address);
+    debug_println("Start detecting ", bank_id, " ", address);
 
     while (scan_i2c(Wire, address, address) == scan_result::OK)
     {
-      SerialDebug.print("Found device on bank_");
-      SerialDebug.print(bank_id);
-      SerialDebug.print(" and address: ");
-      SerialDebug.println(address);
+      debug_println("Found device on bank_", bank_id, " and address: ", address);
 
-      Sensor *sensor = nullptr;
-
-      switch (static_cast<sensor_id_t>(address))
+      Sensor *sensor;
+      switch(obtain_sensor(address, bank, &sensor))
       {
-      case sensor_id_t::AHTxx:
-        /* does it has aht30 or aht20 ? */
-        if (bank.has(aht2x) || bank.has(aht3x))
-        {
+        case sensor_result_t::ERROR:
+          continue; /* outer loop */
+        case sensor_result_t::OLD:
           ++detected;
-          SerialDebug.println("AHT[2|3]x already added");
+          continue; /* outer loop */
+        case sensor_result_t::NEW:
           break;
-        }
-
-        aht2x.end();
-        if (!aht2x.begin())
-        {
-          SerialDebug.println("AHT2x detected");
-          sensor = &aht2x;
-          break;
-        }
-
-        /* looks like i dont have this sensor on shelf */
-        aht3x.end();
-        if (!aht3x.begin())
-        {
-          SerialDebug.println("AHT3x detected");
-          sensor = &aht3x;
-        }
-
-        break;
-      case sensor_id_t::BMP280:
-        if (bank.has(bmp280))
-        {
-          ++detected;
-          SerialDebug.println("BMP already added");
-          break;
-        }
-
-        bmp280.end();
-        if (bmp280.begin())
-        {
-          SerialDebug.println("BMP280 add failed");
-          break;
-        }
-        SerialDebug.println("BMP280 detected");
-
-        break;
-      case sensor_id_t::BME280:
-        SerialDebug.println("BME280 detected *unsupported");
-        break;
-      case sensor_id_t::SHTCx:
-        if (bank.has(shtc3))
-        {
-          ++detected;
-          SerialDebug.println("SHTC3 already known");
-          break;
-        }
-        if (!shtc3.begin())
-        {
-          SerialDebug.println("SHTCx detected");
-          sensor = &shtc3;
-        }
-        else
-        {
-          SerialDebug.println("Initializing SHTC3 failed");
-        }
-        break;
-      case sensor_id_t::SHTxx:
-        if (bank.has(sht3x) || bank.has(sht4x))
-        {
-          ++detected;
-          SerialDebug.println("SHTxx already known");
-          break;
-        }
-
-        /* see sensiron source why this order is important */
-        if (!sht4x.begin())
-        {
-          SerialDebug.println("SHT4x detected");
-          sensor = &sht4x;
-          break;
-        }
-
-        if (!sht3x.begin())
-        {
-          SerialDebug.println("SHT3x detected");
-          sensor = &sht3x;
-          break;
-        }
-
-        SerialDebug.println("Initializing SHTXX failed");
-
-        break;
-      default:
-        break;
       }
+
+      assert(sensor != nullptr);
 
       ++address;
-
-      if (sensor == nullptr)
-      {
-        continue;
-      }
-
       ++detected;
-      SerialDebug.println("Inserint sensor");
+
+      debug_println("Inserint sensor");
 
       bank.sensors.insert(sensor);
     }
@@ -453,13 +456,21 @@ static uint8_t detect_sensor()
     ++bank_id;
   }
 
+  // check PT100
+  if (!pt100_detected)
+  {
+    if (pt100.begin(MAX31865_3WIRE))
+    {
+      pt100_detected = true;
+      ++detected;
+    }
+  }
+
   return !detected;
 }
 
 void setup()
 {
-  setupI2c();
-
   prot_handler.message_callback = message_callback;
 
   Serial.begin(PROTO_BAUND);
@@ -473,7 +484,10 @@ void setup()
   delay(100);
 
   detect_sensor();
+
+  #if WITH_SENSOR_MUNCHING
   task_forced_measure.enable();
+  #endif
 }
 
 static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float *hum, float *pressure)
@@ -506,25 +520,31 @@ static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float 
       if (result)
       {
         bank.sensors.erase(s);
-        SerialDebug.print("Erase sensor");
-        SerialDebug.println(s->sensor_id());
+        debug_println("Erase sensor", s->sensor_id());
 
         continue;
       }
 
-      SerialDebug.print(millis());
-      SerialDebug.print(" t=");
-      SerialDebug.print(r.temp);
-      SerialDebug.print(" h=");
-      SerialDebug.print(r.hum);
-      SerialDebug.print(" p=");
-      SerialDebug.println(r.pres);
+      debug_println(millis(), " t=", r.temp, " h=", r.hum, " p=", r.pres);
 
       readings.add(r);
     }
   }
   // now attempt to read PT100@SPI
-  // TODO(m): PT100 reading
+  if (pt100_detected)
+  {
+    float t = pt100.temperature(RNOMINAL, RREF);
+    if (pt100.readFault())
+    {
+      debug_println("PT100 FAULT");
+      pt100_detected = false;
+    }
+    else
+    {
+      readings.add(reading_t{t, NAN, NAN});
+    }
+    pt100.clearFault();
+  }
 
   if (!readings.size())
   {
