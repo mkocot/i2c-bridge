@@ -37,9 +37,10 @@ uint8_t Bmp280::begin()
   }
 
   bmp280_set_mode(bmp280, BMP280_MODE_FORCED);
-  bmp280_set_pressure_oversampling(bmp280, BMP280_OVERSAMPLING_x1);
-  bmp280_set_temperatue_oversampling(bmp280, BMP280_OVERSAMPLING_x1);
-  bmp280_set_filter(bmp280, BMP280_FILTER_OFF);
+  // Ultra High Precision configuration (from manual)
+  bmp280_set_pressure_oversampling(bmp280, BMP280_OVERSAMPLING_x16);
+  bmp280_set_temperatue_oversampling(bmp280, BMP280_OVERSAMPLING_x16);
+  bmp280_set_filter(bmp280, BMP280_FILTER_COEFF_16);
 
   return 0;
 }
