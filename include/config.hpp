@@ -2,8 +2,17 @@
 #define I2C_BRIDGE_CONFIG_H
 
 #include <Arduino.h>
+#include <utility>
 
-#define X_DEBUG 1
+#define WITH_SOFTWIRE 1
+#define WITH_WIRE 2
+
+// DEBUG options
+// Enable printing debug information
+#define X_DEBUG 0
+
+// Enable cyclic querying for sensor data
+#define WITH_SENSOR_MUNCHING X_DEBUG
 
 #if X_DEBUG
 extern Stream &SerialDebug;
@@ -47,7 +56,10 @@ void debug_println(T &&arg, Args &&...args)
 
 #if 1
 // Shaving few bytes by using empty defines instead empty functions
-#define debug_print(T...) do {} while(0)
+#define debug_print(T...) \
+  do                      \
+  {                       \
+  } while (0)
 #define debug_println(T...) debug_print(...)
 #else
 template <typename... T>
