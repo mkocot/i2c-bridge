@@ -8,9 +8,10 @@
 
 class Bmp280 : public Sensor
 {
-    bmp280_handle_t *bmp280 {nullptr};
+    bmp280_handle_t *bmp280{nullptr};
     uint32_t buffer{0};
-    public:
+
+public:
     Bmp280();
     virtual ~Bmp280();
     virtual uint8_t begin();

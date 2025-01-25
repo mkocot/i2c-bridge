@@ -10,15 +10,16 @@
 
 class Stream
 {
-  public:
-  void print(const char* s){
+public:
+  void print(const char *s)
+  {
     printf("%s", s);
   }
   void print(const uint8_t d)
   {
     printf("%d", d);
   }
-  void println(const char* s)
+  void println(const char *s)
   {
     printf("%s\n", s);
   }
@@ -31,12 +32,15 @@ extern unsigned long millis();
 #endif
 extern int obtain(uint8_t *data);
 
-typedef void (*callback_t) (ProtocolParser::status_t, ProtocolParser::message_t, const uint8_t *, uint8_t);
-#define SENSOR_PROTOCOL_DEBUG ((x)) while {} do(0)
-//#define SENSOR_PROTOCOL_DEBUG ((x)) printf((x))
+typedef void (*callback_t)(ProtocolParser::status_t, ProtocolParser::message_t, const uint8_t *, uint8_t);
+#define SENSOR_PROTOCOL_DEBUG \
+  ((x)) while {}              \
+  do                          \
+  (0)
+// #define SENSOR_PROTOCOL_DEBUG ((x)) printf((x))
 class SensorProtocol
 {
-  private:
+private:
   /* watchdog */
   enum watchdog_event_t : uint8_t
   {
@@ -52,7 +56,6 @@ class SensorProtocol
     AWAKE,
     BAKRING,
   };
-
 
   /* commands */
   static constexpr unsigned long WATCHDOG_TIME = 1000;
@@ -142,10 +145,10 @@ class SensorProtocol
         on_command(parser.msg_status(), parser.message(), parser.buffer(), parser.msg_len());
       }
     }};
-#endif 
+#endif
   void on_command(const ProtocolParser::status_t result,
-                  const ProtocolParser::message_t& msg,
-                  const uint8_t* payload,
+                  const ProtocolParser::message_t &msg,
+                  const uint8_t *payload,
                   const uint8_t len)
   {
     debug_println("Parsed messag: result=", result, " msg=", msg, " payload=", len);
@@ -155,17 +158,18 @@ class SensorProtocol
       message_callback(result, msg, payload, len);
     }
   }
-public:
 
-SensorProtocol()
-{
-}
+public:
+  SensorProtocol()
+  {
+  }
 
   using message_t = ProtocolParser::message_t;
   // using event_t = uint8_t;
   callback_t message_callback{nullptr};
 
-  void tick() {
+  void tick()
+  {
     if (state != AWAKE)
     {
       return;

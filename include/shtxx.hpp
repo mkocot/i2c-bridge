@@ -38,6 +38,7 @@ public:
 
         return 0;
     }
+
     virtual constexpr const SensorType sensor_id() const
     {
         switch (T)

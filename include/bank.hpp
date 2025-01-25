@@ -37,7 +37,7 @@ struct bank_t
 
     void begin();
 
-    bool has(Sensor &sensor)
+    bool has(Sensor &sensor) const
     {
         return sensors.find(&sensor) != sensors.end();
     }

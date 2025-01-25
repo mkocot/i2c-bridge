@@ -6,11 +6,12 @@
 
 class Aht2x : public Sensor
 {
-    aht20_handle_t *aht20 {nullptr};
+    aht20_handle_t *aht20{nullptr};
     uint32_t temp_raw{0};
     uint32_t humidity_raw{0};
     uint8_t humidity_percent{0};
-    public:
+
+public:
     Aht2x();
     virtual ~Aht2x();
     virtual uint8_t begin();
