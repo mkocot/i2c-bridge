@@ -6,6 +6,7 @@
 #include "common_driver.hpp"
 #include "config.hpp"
 #include "shtxx.hpp"
+#include "wtocol.hpp"
 
 #include <Adafruit_MAX31865.h>
 #include <Arduino.h>
@@ -15,14 +16,9 @@
 #include <SensorProtocol.hpp>
 #include <SoftwareSerial.h> /* for debug output */
 #include <SHTSensor.h>
-// #include <SoftWire.h>
 #include <TaskScheduler.h>
 #include <PrintEx.h>
 #include <Wire.h>
-
-#define WITH_SOFTWIRE 1
-#define WITH_WIRE 2
-#define WITH_SENSOR_MUNCHING 1
 
 constexpr auto BANKS = 4;
 
@@ -32,12 +28,28 @@ constexpr auto DEBUG_TX = A7;
 constexpr auto DEBUG_BAUND = 9600;
 constexpr auto PROTO_BAUND = 9600;
 
-typedef struct
+struct reading_t
 {
-  float temp;
-  float hum;
-  float pres;
-} reading_t;
+  using TQuant = THPCompoundSensorData::TempQuantizer;
+  using HQuant = THPCompoundSensorData::HumidityQuantizer;
+  using PQuant = THPCompoundSensorData::PressureQuantizer;
+
+  uint8_t bank_id;
+  TQuant::STORAGE temp;
+  HQuant::STORAGE hum;
+  PQuant::STORAGE pres;
+
+  reading_t(uint8_t bank_id, float temp, float hum, float pres) : bank_id(bank_id),
+                                                                  temp(TQuant::quantize(temp)),
+                                                                  hum(HQuant::quantize(hum)),
+                                                                  pres(PQuant::quantize(pres))
+  {
+  }
+
+  reading_t() : reading_t(0, NAN, NAN, NAN)
+  {
+  }
+} __attribute__((packed));
 
 std::array<bank_t, BANKS> software_i2c = {
     bank_t{SDA_BANK_O, SCL_BANK_0},
@@ -163,18 +175,13 @@ static void message_callback(ProtocolParser::status_t result, ProtocolParser::me
     //   uint8_t msg_id = ProtocolParser::RET_SENSOR_DATA;
     //   reading_container_t readings;
     //   uint8_t crc8;
-    // } __attribute__((packed));
-
-    // static_assert(sizeof(std::array<std::array<float, 3>, 5>) == 3 * 4 * 5, "XX");
-    // static_assert(sizeof(message_frame) == 15, "X");
-
-    // message_frame tmp{};
+    detect_sensor();
 
     static LinkedList<reading_t> readings;
     fetch_values(readings);
 
-    /* WITHOUT CRC8 */
-    uint8_t message_len = 1 + sizeof(float) * 3 * readings.size();
+    /* WITHOUT CRC8 AND msg_len */
+    uint8_t message_len = 1 + sizeof(reading_t) * readings.size();
     Serial.write(&message_len, 1);
     uint8_t crc8 = crc8_dvb_s2(&message_len, 1);
 
@@ -284,7 +291,7 @@ static scan_result scan_i2c(FlexWire &sw, uint8_t from, uint8_t &found)
   return result;
 }
 
-enum class sensor_result_t: uint8_t
+enum class sensor_result_t : uint8_t
 {
   NEW,
   OLD,
@@ -299,14 +306,14 @@ static sensor_result_t obtain_sensor(uint8_t address, const bank_t &bank, Sensor
     /* does it has aht30 or aht20 ? */
     if (bank.has(aht2x) || bank.has(aht3x))
     {
-      debug_println("AHT[2|3]x already added");
+      // debug_println("AHT[2|3]x already added");
       return sensor_result_t::OLD;
     }
 
     aht2x.end();
     if (!aht2x.begin())
     {
-      debug_println("AHT2x detected");
+      // debug_println("AHT2x detected");
       *sensor = &aht2x;
 
       return sensor_result_t::NEW;
@@ -321,12 +328,12 @@ static sensor_result_t obtain_sensor(uint8_t address, const bank_t &bank, Sensor
 
       return sensor_result_t::NEW;
     }
-    
+
     break;
   case sensor_id_t::BMP280:
     if (bank.has(bmp280))
     {
-      debug_println("BMP already added");
+      // debug_println("BMP already added");
 
       return sensor_result_t::OLD;
     }
@@ -334,71 +341,71 @@ static sensor_result_t obtain_sensor(uint8_t address, const bank_t &bank, Sensor
     bmp280.end();
     if (!bmp280.begin())
     {
-      debug_println("BMP280 detected");
+      // debug_println("BMP280 detected");
 
       *sensor = &bmp280;
 
       return sensor_result_t::NEW;
     }
 
-    debug_println("BMP280 add failed");
+    // debug_println("BMP280 add failed");
 
     break;
   case sensor_id_t::BME280:
-    debug_println("BME280 detected *unsupported");
+    // debug_println("BME280 detected *unsupported");
     break;
   case sensor_id_t::SHTCx:
     if (bank.has(shtc3))
     {
-      debug_println("SHTC3 already known");
+      // debug_println("SHTC3 already known");
 
       return sensor_result_t::OLD;
     }
 
     if (!shtc3.begin())
     {
-      debug_println("SHTCx detected");
+      // debug_println("SHTCx detected");
       *sensor = &shtc3;
 
       return sensor_result_t::NEW;
     }
     else
     {
-      debug_println("Initializing SHTC3 failed");
+      // debug_println("Initializing SHTC3 failed");
     }
     break;
   case sensor_id_t::SHTxx:
     if (bank.has(sht3x) || bank.has(sht4x))
     {
-      debug_println("SHTxx already known");
-      
+      // debug_println("SHTxx already known");
+
       return sensor_result_t::OLD;
     }
 
     /* see sensiron source why this order is important */
     if (!sht4x.begin())
     {
-      debug_println("SHT4x detected");
+      // debug_println("SHT4x detected");
 
-      *sensor =  &sht4x;
-      
+      *sensor = &sht4x;
+
       return sensor_result_t::NEW;
     }
 
     if (!sht3x.begin())
     {
-      debug_println("SHT3x detected");
-      *sensor =  &sht3x;
+      // debug_println("SHT3x detected");
+      *sensor = &sht3x;
 
       return sensor_result_t::NEW;
     }
 
-    debug_println("Initializing SHTXX failed");
+    // debug_println("Initializing SHTXX failed");
 
     break;
-  default:
-    return sensor_result_t::ERROR;
   }
+
+  return sensor_result_t::ERROR;
 }
 
 static uint8_t detect_sensor()
@@ -419,36 +426,39 @@ static uint8_t detect_sensor()
 
   uint8_t detected = 0;
   uint8_t bank_id = 0;
+  Sensor *sensor;
+
   for (auto &bank : software_i2c)
   {
     bank.begin();
 
     uint8_t address = 1;
 
-    debug_println("Start detecting ", bank_id, " ", address);
+    // debug_println("Start detecting ", bank_id, " ", address);
 
     while (scan_i2c(Wire, address, address) == scan_result::OK)
     {
-      debug_println("Found device on bank_", bank_id, " and address: ", address);
+      // debug_println("Found device on bank_", bank_id, " and address: ", address);
 
-      Sensor *sensor;
-      switch(obtain_sensor(address, bank, &sensor))
+      auto res = obtain_sensor(address, bank, &sensor);
+      ++address;
+
+      switch (res)
       {
-        case sensor_result_t::ERROR:
-          continue; /* outer loop */
-        case sensor_result_t::OLD:
-          ++detected;
-          continue; /* outer loop */
-        case sensor_result_t::NEW:
-          break;
+      case sensor_result_t::ERROR:
+        continue; /* outer loop */
+      case sensor_result_t::OLD:
+        ++detected;
+        continue; /* outer loop */
+      case sensor_result_t::NEW:
+        break;
       }
 
       assert(sensor != nullptr);
 
-      ++address;
       ++detected;
 
-      debug_println("Inserint sensor");
+      // debug_println("Inserint sensor");
 
       bank.sensors.insert(sensor);
     }
@@ -459,10 +469,19 @@ static uint8_t detect_sensor()
   // check PT100
   if (!pt100_detected)
   {
-    if (pt100.begin(MAX31865_3WIRE))
+    debug_println("pt100 detecting...");
+    // Begin return is always bogus
+    (void)pt100.begin();
+
+    if (pt100.readFault() == 0)
     {
+      debug_println("pt100 detected");
       pt100_detected = true;
       ++detected;
+    }
+    else
+    {
+      debug_println("pt100 not detected");
     }
   }
 
@@ -485,17 +504,19 @@ void setup()
 
   detect_sensor();
 
-  #if WITH_SENSOR_MUNCHING
+#if WITH_SENSOR_MUNCHING
   task_forced_measure.enable();
-  #endif
+#endif
 }
 
-static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float *hum, float *pressure)
+static void fetch_values(LinkedList<reading_t> &readings)
 {
   readings.clear();
 
-  for (auto &bank : software_i2c)
+  for (uint8_t bank_id = 0; bank_id < software_i2c.size(); ++bank_id)
   {
+    auto &bank = software_i2c[bank_id];
+
     if (bank.sensors.empty())
     {
       continue;
@@ -505,16 +526,20 @@ static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float 
 
     for (auto &s : bank.sensors)
     {
-      reading_t r{NAN, NAN, NAN};
+
+      float t = NAN;
+      float h = NAN;
+      float p = NAN;
       uint8_t result = 1;
+
       if (s->sensor_id() == Sensor::BMP280)
       {
         // t_and_h will return temperature and pressure
-        result = s->t_and_h(&r.temp, &r.pres);
+        result = s->t_and_h(&t, &p);
       }
       else
       {
-        result = s->t_and_h(&r.temp, &r.hum);
+        result = s->t_and_h(&t, &h);
       }
 
       if (result)
@@ -525,25 +550,35 @@ static void fetch_values(LinkedList<reading_t> &readings) // float *temp, float 
         continue;
       }
 
-      debug_println(millis(), " t=", r.temp, " h=", r.hum, " p=", r.pres);
-
-      readings.add(r);
+      readings.add(reading_t(bank_id, t, h, p));
     }
   }
   // now attempt to read PT100@SPI
   if (pt100_detected)
   {
+    debug_println("reading temp");
     float t = pt100.temperature(RNOMINAL, RREF);
     if (pt100.readFault())
     {
-      debug_println("PT100 FAULT");
+      debug_println("PT100 FAULT: ", pt100.readFault(), t);
       pt100_detected = false;
     }
     else
     {
-      readings.add(reading_t{t, NAN, NAN});
+      readings.add(reading_t(0xFF, t, NAN, NAN));
     }
+    debug_println("pt100 temp: ", t);
     pt100.clearFault();
+  }
+  else
+  {
+    debug_println("skip pt100");
+  }
+
+  for (uint8_t i = 0; i < readings.size(); ++i)
+  {
+    auto r = readings.get(i);
+    debug_println(millis(), " t=", r.temp, " h=", r.hum, " p=", r.pres);
   }
 
   if (!readings.size())
