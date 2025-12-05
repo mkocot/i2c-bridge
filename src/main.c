@@ -1,3 +1,8 @@
+#include "ahtxx.h"
+#include "bmp280.h"
+#include "common_driver.h"
+#include "shtxx.h"
+
 #include <stdio.h>
 #include <ch32fun.h>
 #include <ch32v003_GPIO_branchless.h>
@@ -9,10 +14,11 @@
 #include <driver_sht4x.h>
 
 #include <driver_bmp280.h>
-// #include <driver_bme280.h>
+#include <driver_bme280.h>
 #include <driver_max31865.h>
 #include <driver_tca9548a.h>
 #include <driver_shtc3.h>
+
 
 union any_sensor_u {
   aht30_handle_t aht;
@@ -21,11 +27,6 @@ union any_sensor_u {
 
 typedef union any_sensor_u any_sensor_t;
 
-static aht30_handle_t aht30;
-static sht35_handle_t sht35;
-static sht4x_handle_t sht4x;
-static shtc3_handle_t shtc3;
-static bmp280_handle_t bmp280;
 static max31865_handle_t max31865;
 static tca9548a_handle_t tca9548a;
 // sht, dht, ...
@@ -42,103 +43,124 @@ static tca9548a_handle_t tca9548a;
 
 struct spi_device_s
 {
+  /* use hardware or software NSS */
+  uint8_t nss_pin;
   uint8_t regb;
 };
 
 typedef struct spi_device_s spi_device_t;
 
-static void spi_init(spi_device_t *handle)
+typedef enum spi_mode_e {
+  SPI_MODE00 = SPI_CPOL_Low | SPI_CPHA_1Edge,
+  SPI_MODE01 = SPI_CPOL_Low | SPI_CPHA_2Edge,
+  SPI_MODE10 = SPI_CPOL_High | SPI_CPHA_1Edge,
+  SPI_MODE11 = SPI_CPOL_High | SPI_CPHA_2Edge,
+  /* aliases */
+  SPI_MODE0 = SPI_MODE00,
+  SPI_MODE3 = SPI_MODE11,
+  /* mask */
+  SPI_MODE_MASK = SPI_MODE11,
+} spi_mode_t;
+
+typedef enum spi_frame_e {
+  SPI_FRAME_8BITS,
+  SPI_FRAME_16BITS,
+} spi_frame_t;
+
+
+typedef enum spi_byte_order_e {
+  SPI_MSB_FIRST,
+  SPI_LSB_FIRST,
+} spi_byte_order_t;
+
+uint8_t spi_begin_transaction(spi_device_t *handle);
+uint8_t spi_end_transaction(spi_device_t *handle);
+
+spi_device_t spi;
+
+#define FUN_OUTPUT_MULTIPLEXED (GPIO_CFGLR_OUT_10Mhz_AF_PP)
+
+// static uint8_t spi_init_software_nss(uint8_t pin)
+// {
+//   funPinMode(pin, GPIO_CFGLR_IN_PUPD);
+
+//   return 0;
+// }
+
+static uint8_t spi_init(spi_device_t *handle, uint8_t nss_pin, spi_mode_t mode, spi_frame_t frame_size, spi_byte_order_t msb_first)
 {
-  // return;
+  if (frame_size != 8 && frame_size != 16)
+  {
+    return 1;
+  }
 
-  // if (handle->regb > 4)
-  // {
-  //   handle->regb = 4;
-  // }
-  // if (handle->regb == 0)
-  // {
-  //   handle->regb = 1;
-  // }
-#if 0
-	// Toggle the I2C Reset bit to init Registers
-	RCC->APB2PRSTR |=  RCC_APB2Periph_SPI1;
-	RCC->APB2PRSTR &= ~RCC_APB2Periph_SPI1;
+  handle->nss_pin = nss_pin;
+  handle->regb = frame_size;
 
-	// Enable the I2C Peripheral Clock
-	RCC->APB2PCENR |= RCC_APB2Periph_SPI1;
+  funGpioInitC();
+  //Enable clock for PORTC, SPI1
+  RCC->APB2PCENR |= RCC_IOPCEN | RCC_SPI1EN;
 
-	// Enable the selected I2C Port, and the Alternate Function enable bit
-	RCC->APB2PCENR |= SPI_PORT_RCC | RCC_APB2Periph_AFIO;
+  funPinMode(PC7, FUN_INPUT);               // MISO (17)
+  funPinMode(PC6, FUN_OUTPUT_MULTIPLEXED);  // MOSI (16)
+  funPinMode(PC5, FUN_OUTPUT_MULTIPLEXED);  // SCK (15)
+  // Hardware Master or Slave mode:
+  //  Float, pull-up or pull-down input
+  // Hardware Master mode/NSS output enable mode:
+  //  Push-pull multiplexed output 
+  if (!handle->nss_pin)
+  {
+    funPinMode(PC1, FUN_OUTPUT_MULTIPLEXED);  // NSS (11)
+    // Enable SS output
+    SPI1->CTLR2 = CTLR2_SSOE_Set;
+  }
+  else
+  {
+    funPinMode(handle->nss_pin, GPIO_CFGLR_IN_PUPD);
+    // SPI_Mode_Master can only be selected when using HARDWARE control
+    // or SS is alredy pulled HIGH on SOFTWARE control
+    spi_end_transaction(handle);
+  }
 
-	// Reset the AFIO_PCFR1 register, then set it up
-	AFIO->PCFR1 &= ~(0x04400002);
-	AFIO->PCFR1 |= I2C_AFIO_REG;
+  // on ESP
+  // 1MHz, MSB, MODE0
+  // MODE0 == CPHA=0, cpol=0
+  uint16_t config = SPI_Mode_Master;
+  // full duplex
+  config |= SPI_Direction_2Lines_FullDuplex;
+  // 24Mhz@48MHz MCU
+  // BR -> Configure clock
+  config |= SPI_BaudRatePrescaler_16; // 48 / 16 -> 3
+  // // SPIMODE(0,0) AKA MODE0: CPOL and CPHA is 0
+  // config |= SPI_CPOL_Low | SPI_CPHA_1Edge;
+  config |= mode & SPI_MODE_MASK;
+  // DEF set to 8bits (value 0)
+  config |= handle->regb == 8 ? SPI_DataSize_8b : SPI_DataSize_16b;
 
-    GPIO_InitTypeDef GPIO_InitStructure={0};
-    SPI_InitTypeDef SPI_InitStructure={0};
+  // Frame Format is MSB (value 0)
+  // config |= msb_first ? SPI_FirstBit_MSB : SPI_CTLR1_LSBFIRST; 
+  config |= SPI_FirstBit_MSB;
 
-    RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOC | RCC_APB2Periph_SPI1, ENABLE );
+  // SSM 1: software control, 0: hardware controle
+  config |= handle->nss_pin ? SPI_NSS_Soft : SPI_NSS_Hard;
+  // config |= SPI_NSS_Soft;
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3;
-        GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-        GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-        GPIO_Init( GPIOC, &GPIO_InitStructure );
+  // SSI (1-> NSS pin is HIGH, 0 -> NSS pin is LOW on selection)
+  // REQUIRED TO BE 1
+  config |= SPI_NSSInternalSoft_Set;
 
-#if (SPI_MODE == HOST_MODE)
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
+  // Enable SPI
+  config |= SPI_CTLR1_SPE;
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
+  //Set SPI1, max clock 48Mhz/2 = 24Mhz, master mode, full-duplex mode,8bit data length
+	//Internal slave select and software slave managment
+	// SPI1->CTLR1 = SPI_CTLR1_SSI | SPI_CTLR1_SSM | SPI_CTLR1_MSTR; //| SPI_CTLR1_BR_1 | SPI_CTLR1_BR_0;
+  SPI1->CTLR1 = config;
 
-#elif (SPI_MODE == SLAVE_MODE)
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
-
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
-
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-    GPIO_Init( GPIOC, &GPIO_InitStructure );
-
-#endif
-
-    SPI_InitStructure.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
-
-#if (SPI_MODE == HOST_MODE)
-    SPI_InitStructure.SPI_Mode = SPI_Mode_Master;
-
-#elif (SPI_MODE == SLAVE_MODE)
-    SPI_InitStructure.SPI_Mode = SPI_Mode_Slave;
-
-#endif
-
-    SPI_InitStructure.SPI_DataSize = SPI_DataSize_8b;
-    SPI_InitStructure.SPI_CPOL = SPI_CPOL_Low;
-    SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;
-    SPI_InitStructure.SPI_NSS = SPI_NSS_Soft;
-    SPI_InitStructure.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_256;
-    SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;
-    SPI_InitStructure.SPI_CRCPolynomial = 7;
-    SPI_Init( SPI1, &SPI_InitStructure );
-
-    SPI_Cmd( SPI1, ENABLE );
-#endif
 }
 #define SPI_DELAY 100
-
+#if 0
 void SPISendBytes(uint8_t *sendData, uint32_t length)
 {
   uint32_t loop = 0;
@@ -189,189 +211,319 @@ void SPISendReceiveBytes(uint8_t *sendData, uint8_t *getData, uint32_t length)
     getData[loop] = SPI_I2S_ReceiveData(SPI1);
   }
 }
+#endif
 
-i2c_device_t i2c = {
-    .clkr = I2C_CLK_400KHZ, /* "default" */
-    .type = I2C_ADDR_7BIT,  /* common addr type */
-    .addr = 0x00,           /* device addres */
-    .regb = 1,              /* register bytes, most devices uses 1 byte for register */
-    .tout = 2000            /* cycles ?*/
-};
+/* 1：Tx buffer empty */
+#define SPI_WAIT_FOR_EMPTY_TX() \
+  do { } while((SPI1->STATR & SPI_STATR_TXE) != SPI_STATR_TXE)
+
+/* 1：SPI is busy in communication or Tx buffer is not empty */
+#define SPI_WAIT_FOR_IDLE() \
+	do {} while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY)
+
+/* 1：Rx buffer not empty */
+#define SPI_WAIT_FOR_DATA() \
+	do {} while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE)
+
+
+void spi_send8(uint8_t data)
+{
+  SPI_WAIT_FOR_EMPTY_TX();
+
+	SPI1->DATAR = data;
+  SPI_WAIT_FOR_IDLE();
+
+  // not required?
+	// while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE){};
+
+  /* WARNING: discaring result is mandatory */
+  data = (uint8_t)SPI1->DATAR;
+}
+
+uint8_t spi_recv8(uint8_t dummy)
+{
+	SPI1->DATAR = dummy;
+  SPI_WAIT_FOR_DATA();
+	
+	return (uint8_t)SPI1->DATAR;
+}
 
 static void loop();
 
-static inline void libdriver_delay_ms(uint32_t delay) { Delay_Ms(delay); }
-static inline uint8_t libdriver_iic_write(uint8_t reg, uint8_t *buf, uint16_t len)
+static inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len)
 {
-  i2c.regb = 1;
-  return i2c_write_reg(&i2c, reg, buf, len);
-}
-static inline uint8_t libdriver_iic_read(uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  i2c.regb = 1;
-  return i2c_read_reg(&i2c, reg, buf, len);
-}
+  spi_begin_transaction(&spi);
 
-static inline uint8_t libdriver_nop_void(void) { return 0; }
-
-#define AHT20_ADDRESS (0x38)
-#define AHT30_ADDRESS (0x38)
-#define BMP280_ADDRESS (0x77)
-
-static inline uint8_t aht20_iic_init()
-{
-  // i2c.regb = 1;
-  i2c.addr = AHT20_ADDRESS;
-
-  return 0;
-}
-
-static inline uint8_t aht20_iic_deinit()
-{
-  return 0;
-}
-
-static inline uint8_t aht30_iic_init()
-{
-  i2c.addr = AHT30_ADDRESS;
-  // i2c.regb = 1;
-
-  return 0;
-}
-static inline uint8_t bmp280_iic_init()
-{
-  i2c.addr = BMP280_ADDRESS;
-  // i2c.regb = 1;
-
-  return 0;
-}
-
-static inline uint8_t sht3x_iic_init()
-{
-  /* library address is shifted leaving direction as 0 we need raw address */
-  i2c.addr = SHT35_ADDRESS_0 >> 1;
-  // i2c.regb = 2;
-
-  return 0;
-}
-
-static inline uint8_t sht4x_iic_init()
-{
-  i2c.addr = SHT4X_ADDRESS_0 >> 1;
-  // i2c.regb = 1;
-
-  return 0;
-}
-
-static inline uint8_t shtc3_iic_init()
-{
-  // i2c.regb = 2;
-
-  return 0;
-}
-
-static inline uint8_t libdriver_iic_addr_read_noreg(uint8_t addr, uint8_t *buf, uint16_t len)
-{
-  i2c.addr = addr >> 1;
-
-  return i2c_read_raw(&i2c, buf, len);
-}
-
-static inline uint8_t libdriver_iic_addr_write_noreg(uint8_t addr, uint8_t *buf, uint16_t len)
-{
-  i2c.addr = addr >> 1;
-
-  return i2c_write_raw(&i2c, buf, len);
-}
-
-// Somehow this function is special as compared to aht...
-static inline uint8_t libdriver_iic_addr_read(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  i2c.addr = addr >> 1;
-  return libdriver_iic_read(reg, buf, len);
-}
-
-static inline uint8_t libdriver_iic_addr_write(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  i2c.addr = addr >> 1;
-  return libdriver_iic_write(reg, buf, len);
-}
-
-static inline uint8_t libdriver_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t *buf, uint16_t len)
-{
-  i2c.addr = addr >> 1;
-  i2c.regb = 2;
-
-  uint8_t ret;
-  if (i2c.addr == 0x44)
+  printf("W: reg=%X, len=%d\n", reg, len);
+  spi_send8(reg);
+  for (int i = 0; i < len; ++i)
   {
-    /* this should be handled in SHT3X driver...
-    * fetching data in 'single shot' is taking absurd 12ms. Setting this timeout
-    * in i2c driver will be hard penalty during communication with other devices
-    * to fix it we are using delayed read only for 2 commands. Anyway MCU could
-    * do something usefull in that time...
-    */
-    switch (reg >> 8)
-    {
-      case 0x24: /* single read without clock stretching */
-        /* fallthrough */
-      case 0x2C: /* single read with clock stretching */
-        ret = i2c_read_reg_delay(&i2c, reg, buf, len, 12);
-        break;
-      case 0xE0: /* sht35_continuous_read */
-        /* fallthrough */
-      default:
-        goto regular_read;
-    }
+    spi_send8(buf[i]);
   }
-  else if (i2c.addr == 0x70)
+
+  spi_end_transaction(&spi);
+
+  return 0;
+}
+
+static inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len)
+{
+  /* NOTE(m): libdriver will is putting 1 at 8th bit, it's ok as BME280 is using
+     7bit register
+  */
+  spi_begin_transaction(&spi);
+
+  printf("R: reg=%X, len=%d\n", reg, len);
+  spi_send8(reg);
+  printf("Data: ");
+  // 2240 0 4 2244 8c4
+  for (int i = 0; i < len; ++i)
   {
-    /* SHTC3 driver, see above
-     * Low Power mode: ~ 0.7ms  0.8ms max
-     * Normal mode   : 10.8ms   12.1ms max
-     */
-    switch (reg >> 8)
-    {
-      case 0x78: /* T without clock stretch */
-        /* fallthrough */
-      case 0x7C: /* T with clock stretch */
-        /* fallthrough */
-      case 0x58: /* RH without clock stretch */
-        /* fallthrough */
-      case 0x5C: /* RH with clock stretch */
-        ret = i2c_read_reg_delay(&i2c, reg, buf, len, 11);
-        break;
-      default:
-        goto regular_read;
-    }
+    buf[i] = spi_recv8(buf[i]);
+
+    printf("%X ", buf[i]);
+  }
+  printf("\n");
+
+  spi_end_transaction(&spi);
+
+  return 0;
+}
+
+uint8_t spi_begin_transaction(spi_device_t *handle)
+{
+  if (handle->nss_pin)
+  {
+    funDigitalWrite(handle->nss_pin, FUN_LOW);
   }
   else
   {
-    regular_read:
-    ret = i2c_read_reg(&i2c, reg, buf, len);
+    SPI1->CTLR1 |= SPI_CTLR1_SPE;
   }
 
-  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
-  return ret;
+  return 0;
+
 }
 
-static inline uint8_t libdriver_iic_addr16_write(uint8_t addr, uint16_t reg, uint8_t *buf, uint16_t len)
+uint8_t spi_end_transaction(spi_device_t *handle)
 {
-  i2c.addr = addr >> 1;
-  i2c.regb = 2;
-
-  uint8_t ret = i2c_write_reg(&i2c, reg, buf, len);
-  printf("A16W: %X, %X, %u %u =%u\n", i2c.addr, reg, i2c.regb, len, ret);
-  return ret;
-}
-
-static inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len)
-{
+  if (handle->nss_pin)
+  {
+    funDigitalWrite(handle->nss_pin, FUN_HIGH);
+  }
+  else
+  {
+    SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
+  }
+  
   return 0;
 }
-static inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len)
+
+uint8_t spi_send_receive(const uint8_t *data, const uint8_t data_len, uint8_t *recv, const uint8_t recv_len)
 {
+    // spi_send8(0xD0);
+
+    // // wait for data?
+    // printf("Wait for data receive\n");
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // // Delay_Ms(200);
+    // printf("X: %X\n", SPI1->DATAR);
+
+    // // Send dommy data and wait for response of 1 byte
+    // spi_send8(0x00);
+    // printf("Wait for data receive (real)\n");
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // // Delay_Ms(200);
+    // printf("R: %X\n", SPI1->DATAR);
+
+  spi_send8(data[0]);
+  // printf("1: %X\n", SPI1->DATAR);
+
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // WARNING: You have to read data or it will read correct value
+    // after 2nd send_receive invocation
+  // printf("2: %X\n", SPI1->DATAR);
+
+  recv[0] = spi_recv8(0x00);
+
   return 0;
+}
+
+void spi_fun(void)
+{
+  #if 0
+  // SS: 1
+  // begin()
+  // SS: 0
+  // write(0xD0)
+  // transfer(0xFF) // aka read
+  // SS: 1
+  // end()
+  // SS: 1
+
+  printf("0: SPI STATR: %X\n", SPI1->STATR);
+  // TODO ? Software mode is not working as expected and no data is received
+  // from sensor. Hardware works OK, but requires pin PC1 or PC0 (alternate)
+  spi_init(&spi, 0, SPI_MODE0, 8, 1);
+  printf("1: SPI STATR: %X\n", SPI1->STATR);
+  // Enable SPI
+  // SPI1->CTLR1 |= SPI_CTLR1_SPE;
+  // printf("2: SPI STATR: %X\n", SPI1->STATR);
+  // // 
+  // // Enable SPI
+  // while(1) {
+  //   printf("ENABLE\n");
+  //   SPI1->CTLR1 |= SPI_CTLR1_SPE;
+  //   Delay_Ms(4000);
+  //   printf("DISABLE\n");
+  //   SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
+  //   Delay_Ms(4000);
+  // }
+
+  Delay_Ms(1000);
+
+  // spi_recv8(0xFF);
+  volatile uint16_t dummy;
+  while(1)
+  {
+
+    #if 1
+    // SPI1->CTLR1 |= SPI_CTLR1_SPE;
+    // printf("START: SPI STATR: %X\n", SPI1->STATR);
+    // Delay_Ms(100);
+    // ensure nothing is pending?
+    // printf("Wait for Transmit buffer empty\n");
+    // while(!(SPI1->STATR & SPI_STATR_TXE))
+    // {
+    //   __NOP();
+    // }
+
+    // SPI1->DATAR = 0xD0;
+
+    // // Delay_Ms(100);
+    // // wait for completion
+    // printf("Wait for transfer completion\n");
+    // while(!(SPI1->STATR & SPI_STATR_TXE))
+    // {
+    //   __NOP();
+    // }
+    // // SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
+    // // SPI1->CTLR1 |= SPI_CTLR1_SPE;
+
+    // // write dummy data and then read response for first command
+    // while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY){};
+
+    //begin transaction
+
+    #if 1
+    uint8_t resp = 0xFF;
+    libdriver_spi_read(0xD0, &resp, 1);
+    printf("R: %X\n", resp);
+    #elif 1
+    uint8_t reg = 0xD0;
+    spi_send_receive(&reg, 1, &reg, 1);
+    printf("R: %X\n", reg);
+    #else
+
+    spi_begin_transaction(&spi);
+
+    spi_send8(0xD0);
+
+    // wait for data?
+    printf("Wait for data receive\n");
+    while (!(SPI1->STATR & SPI_STATR_RXNE))
+    {
+      __NOP();
+    }
+    // Delay_Ms(200);
+    printf("X: %X\n", SPI1->DATAR);
+
+    // Send dommy data and wait for response of 1 byte
+    spi_send8(0x00);
+    printf("Wait for data receive (real)\n");
+    while (!(SPI1->STATR & SPI_STATR_RXNE))
+    {
+      __NOP();
+    }
+    // Delay_Ms(200);
+    printf("R: %X\n", SPI1->DATAR);
+    spi_end_transaction(&spi);
+    #endif
+
+
+    #else
+
+    // spi_send8(0xD0);
+    printf("R: %X\n", spi_recv8(0xD0));
+    // SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
+    // printf("STOP: SPI STATR: %X\n", SPI1->STATR);
+    #endif
+
+    // end transaction
+
+    Delay_Ms(4000);
+  }
+#endif
+
+  static bme280_handle_t bme;
+  DRIVER_BME280_LINK_INIT(&bme, bme280_handle_t);
+  DRIVER_BME280_LINK_DEBUG_PRINT(&bme, debug_print);
+  DRIVER_BME280_LINK_DELAY_MS(&bme, libdriver_delay_ms);
+  DRIVER_BME280_LINK_SPI_DEINIT(&bme, libdriver_nop_void);
+  DRIVER_BME280_LINK_SPI_INIT(&bme, libdriver_nop_void);
+  DRIVER_BME280_LINK_SPI_READ(&bme, libdriver_spi_read);
+  DRIVER_BME280_LINK_SPI_WRITE(&bme, libdriver_spi_write);
+  // not used but required
+  DRIVER_BME280_LINK_IIC_DEINIT(&bme, libdriver_nop_void);
+  DRIVER_BME280_LINK_IIC_INIT(&bme, libdriver_nop_void);
+  DRIVER_BME280_LINK_IIC_READ(&bme, libdriver_iic_addr_read);
+  DRIVER_BME280_LINK_IIC_WRITE(&bme, libdriver_iic_addr_write);
+
+  bme280_set_interface(&bme, BME280_INTERFACE_SPI);
+
+  spi_init(&spi, 0, SPI_MODE0, 8, 1);
+
+  printf("I = %d\n", bme.inited);
+
+  while(1)
+  {
+    if (!bme.inited)
+    {
+      if (bme280_init(&bme))
+      {
+        printf("F\n");
+      }
+      else
+      {
+        printf("I\n");
+        bme280_set_mode(&bme, BME280_MODE_FORCED);
+        bme280_set_filter(&bme, BME280_FILTER_OFF);
+        bme280_set_humidity_oversampling(&bme, BME280_OVERSAMPLING_x1);
+        bme280_set_temperatue_oversampling(&bme, BME280_OVERSAMPLING_x1);
+        bme280_set_pressure_oversampling(&bme, BME280_OVERSAMPLING_x1);
+      }
+    }
+    else
+    {
+      printf("Already done\n");
+      uint32_t tr, pr, hr;
+      float t, p, h;
+
+      bme280_read_temperature_pressure_humidity(&bme, &tr, &t, &pr, &p, &hr, &h);
+      printf("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
+    }
+
+    Delay_Ms(1000);
+  }
 }
 
 static inline uint8_t tca9458a_iic_setup()
@@ -432,33 +584,6 @@ typedef enum
   SENSOR_SHTC3 = 1 << 5,
 } sensor_t;
 
-#define DRIVER_SET_DEFAULT_IIC(DRIVER, HANDLE, TYPE)                   \
-  DRIVER_## DRIVER ##_LINK_INIT((HANDLE), TYPE);                       \
-  DRIVER_## DRIVER ##_LINK_DEBUG_PRINT((HANDLE), NULL);                \
-  DRIVER_## DRIVER ##_LINK_DELAY_MS((HANDLE), libdriver_delay_ms);     \
-  DRIVER_## DRIVER ##_LINK_IIC_INIT((HANDLE), libdriver_nop_void);     \
-  DRIVER_## DRIVER ##_LINK_IIC_DEINIT((HANDLE), libdriver_nop_void);   \
-  DRIVER_## DRIVER ##_LINK_IIC_READ_CMD((HANDLE), libdriver_iic_read); \
-  DRIVER_## DRIVER ##_LINK_IIC_WRITE_CMD((HANDLE), libdriver_iic_write)
-
-#define DRIVER_SET_DEFAULT_IIC_ADDR(DRIVER, HANDLE, TYPE)               \
-  DRIVER_## DRIVER ##_LINK_INIT((HANDLE), TYPE);                        \
-  DRIVER_## DRIVER ##_LINK_DEBUG_PRINT((HANDLE), NULL);                 \
-  DRIVER_## DRIVER ##_LINK_DELAY_MS((HANDLE), libdriver_delay_ms);      \
-  DRIVER_## DRIVER ##_LINK_IIC_INIT((HANDLE), libdriver_nop_void);      \
-  DRIVER_## DRIVER ##_LINK_IIC_DEINIT((HANDLE), libdriver_nop_void);    \
-  DRIVER_## DRIVER ##_LINK_IIC_READ((HANDLE), libdriver_iic_addr_read); \
-  DRIVER_## DRIVER ##_LINK_IIC_WRITE((HANDLE), libdriver_iic_addr_write)
-
-#define DRIVER_SET_DEFAULT_IIC_ADDR16(DRIVER, HANDLE, TYPE)                         \
-  DRIVER_## DRIVER ##_LINK_INIT((HANDLE), TYPE);                                    \
-  DRIVER_## DRIVER ##_LINK_DEBUG_PRINT((HANDLE), debug_print);                      \
-  DRIVER_## DRIVER ##_LINK_DELAY_MS((HANDLE), libdriver_delay_ms);                  \
-  DRIVER_## DRIVER ##_LINK_IIC_INIT((HANDLE), libdriver_nop_void);                  \
-  DRIVER_## DRIVER ##_LINK_IIC_DEINIT((HANDLE), libdriver_nop_void);                \
-  DRIVER_## DRIVER ##_LINK_IIC_READ_ADDRESS16((HANDLE), libdriver_iic_addr16_read); \
-  DRIVER_## DRIVER ##_LINK_IIC_WRITE_ADDRESS16((HANDLE), libdriver_iic_addr16_write)
-
 void i2c_scan_callback(const uint8_t addr)
 {
   printf("Address: 0x%02X Responded.\n", addr);
@@ -506,7 +631,6 @@ static void tca9548a_reset(tca9548a_handle_t *handle)
   tca9548a_channel_set(handle, TCA9548A_CHANNEL_NONE);
 }
 
-static uint8_t setupBMP280();
 
 static void check_bank(struct bank_t *bank)
 {
@@ -526,10 +650,21 @@ static void check_bank(struct bank_t *bank)
     new_config |= SENSOR_BMP280;
   }
 
-  if (i2c_ping(AHT20_ADDRESS) == I2C_OK)
+  if (i2c_ping(AHTXX_ADDRESS) == I2C_OK)
   {
     // copy config
     new_config |= SENSOR_AHT;
+  }
+
+  if (i2c_ping(SHTXX_ADDRESS) == I2C_OK)
+  {
+    /* only is possible, but unknown at this point */
+    new_config |= SENSOR_SHT3X | SENSOR_SHT4X;
+  }
+
+  if (i2c_ping(SHTC3_ADDRESS) == I2C_OK)
+  {
+    new_config |= SENSOR_SHTC3;
   }
 
   sensor_t sensor_diff = new_config ^ bank->sensors;
@@ -578,190 +713,6 @@ static void check_bank(struct bank_t *bank)
 }
 
 /* MUX configuration is out of this scope */
-static uint8_t setupBMP280()
-{
-  bmp280_iic_init();
-  if (bmp280_init(&bmp280))
-  {
-    printf("bmp280 failed\n");
-    return 1;
-  }
-
-  if (bmp280_set_mode(&bmp280, BMP280_MODE_FORCED))
-  {
-    printf("F1\n");
-    return 2;
-  }
-
-  if (bmp280_set_filter(&bmp280, BMP280_FILTER_OFF))
-  {
-    printf("F2\n");
-    return 3;
-  }
-
-  // Thes both method ar botched, you cannot set pressure and temperature
-  // only first one is selected and 2nd ignored
-  // if (bmp280_set_pressure_temperature_oversampling(&bmp280, BMP280_OVERSAMPLING_x1, BMP280_OVERSAMPLING_x1))
-  // {
-  //   printf("F3\n");
-  // }
-
-  if (bmp280_set_pressure_oversampling(&bmp280, BMP280_OVERSAMPLING_x1))
-  {
-    printf("F3\n");
-    return 4;
-  }
-
-  Delay_Ms(1);
-
-  if (bmp280_set_temperatue_oversampling(&bmp280, BMP280_OVERSAMPLING_x1))
-  {
-    printf("F4\n");
-    return 5;
-  }
-
-  return 0;
-}
-
-static uint8_t setupSHT4X()
-{
-  uint8_t ret;
-  uint16_t t_raw, h_raw;
-  float t, h;
-
-  sht4x_iic_init();
-  if (!sht4x.inited)
-  {
-    if ((ret = sht4x_init(&sht4x)))
-    {
-      printf("SHT4X: init failed: %d\n", ret);
-      return 1;
-    }
-  }
-
-  if (sht4x_read(&sht4x, SHT4X_MODE_HIGH_PRECISION_WITH_NO_HEATER, &t_raw, &t, &h_raw, &h))
-  {
-    printf("SHT4X: read failed\n");
-  }
-  else
-  {
-    printf("SHT4X: reading OK\n");
-    printf("SHT4X:");
-    if (t_raw)
-    {
-      int dec = (t - (int)t) * 100;
-      printf(" T=%d.%d", (int)(t), dec);
-    }
-    if (h_raw)
-    {
-      printf(" H=%d", (int)(h));
-    }
-    printf("\n");
-  }
-
-  return 0;
-}
-
-static uint8_t setupSHT3X()
-{
-  uint16_t t_raw, h_raw;
-  float t, h;
-
-  sht3x_iic_init();
-  if (!sht35.inited)
-  {
-    if (sht35_init(&sht35))
-    {
-      printf("SHT35: init failed\n");
-      return 1;
-    }
-
-    if (sht35_set_heater(&sht35, SHT35_BOOL_FALSE))
-    {
-      printf("SHT35: heaters gonna heat\n");
-    }
-
-    if (sht35_set_repeatability(&sht35, SHT35_REPEATABILITY_HIGH))
-    {
-      printf("SHT35: repatability failed\n");
-    }
-  }
-
-  uint16_t status;
-  if (sht35_get_status(&sht35, &status))
-  {
-    printf("SHT35: reading status failed\n");
-  }
-  else
-  {
-    printf("SHT35: status %X\n", status);
-  }
-
-
-  // Without stretching we only get temp + crc and garbage humidity
-  // with clock stretch there is no data at all
-  if (sht35_single_read(&sht35, SHT35_BOOL_TRUE, &t_raw, &t, &h_raw, &h))
-  {
-    printf("SHT35: reading fialed\n");
-  }
-  else
-  {
-    printf("SHT35: reading OK\n");
-    printf("SHT35:");
-    if (t_raw)
-    {
-      int dec = (t - (int)t) * 100;
-      printf(" T=%d.%d", (int)(t), dec);
-    }
-    if (h_raw)
-    {
-      printf(" H=%d", (int)(h));
-    }
-    printf("\n");
-  }
-
-  return 0;
-}
-
-static uint8_t setupSHTC3()
-{
-  uint16_t t_raw, h_raw;
-  float t, h;
-
-  shtc3_iic_init();
-  if (!shtc3.inited)
-  {
-    if (shtc3_init(&shtc3))
-    {
-      printf("SHTC3: init fail\n");
-
-      return 1;
-    }
-  }
-
-
-  if (shtc3_read(&shtc3, SHTC3_BOOL_TRUE, &t_raw, &t, &h_raw, &h))
-  {
-    printf("SHTC3: read failed\n");
-  }
-  else
-  {
-    printf("SHTC3: reading OK\n");
-    printf("SHTC3:");
-    if (t_raw)
-    {
-      int dec = (t - (int)t) * 100;
-      printf(" T=%d.%d", (int)(t), dec);
-    }
-    if (h_raw)
-    {
-      printf(" H=%d", (int)(h));
-    }
-    printf("\n");
-  }
-
-  return 0;
-}
 
 // DMA transfer completion interrupt. It will fire when the DMA transfer is
 // complete. We use it just to blink the LED
@@ -932,17 +883,14 @@ void asdf() {
 
 }
 
-static void debug_print(const char *const fmt, ...)
-{
-  printf(fmt);
-}
-
 int main()
 {
   SystemInit();
 
   // uart_fun();
   // asdf();
+
+  spi_fun();
 
 
   initializeGPIO();
@@ -958,11 +906,12 @@ int main()
   // Delay_Ms(1000);
   // }
 
-  DRIVER_SET_DEFAULT_IIC(AHT30, &aht30, aht30_handle_t);
 
-  DRIVER_SET_DEFAULT_IIC_ADDR(BMP280, &bmp280, bmp280_handle_t);
-  bmp280_set_interface(&bmp280, BMP280_INTERFACE_IIC);
-  bmp280_set_addr_pin(&bmp280, 0x77);
+  init_ahtxx();
+  init_bmp280();
+  init_sht3x();
+  init_sht4x();
+  init_shtc3();
 
   DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
   DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, NULL);
@@ -972,32 +921,6 @@ int main()
   DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
   DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, libdriver_spi_write);
 
-  DRIVER_SET_DEFAULT_IIC_ADDR16(SHT35, &sht35, sht35_handle_t);
-  // DRIVER_SHT35_LINK_INIT(&sht35, sht35_handle_t);
-  // DRIVER_SHT35_LINK_DEBUG_PRINT(&sht35, debug_print);
-  // DRIVER_SHT35_LINK_DELAY_MS(&sht35, libdriver_delay_ms);
-  // DRIVER_SHT35_LINK_IIC_INIT(&sht35, libdriver_nop_void);
-  // DRIVER_SHT35_LINK_IIC_DEINIT(&sht35, libdriver_nop_void);
-  // DRIVER_SHT35_LINK_IIC_READ_ADDRESS16(&sht35, libdriver_iic_addr16_read);
-  // DRIVER_SHT35_LINK_IIC_WRITE_ADDRESS16(&sht35, libdriver_iic_addr16_write);
-  sht35_set_addr_pin(&sht35, SHT35_ADDRESS_0);
-
-
-  // WHY THERE IS SUCH DISCREPARENCY BETWEEN MODULES
-  // READ_COMMAND vs READ_CMD
-  // WRITE_COMMAND vs WRITE_CMD
-  // somethimes there is addres sometimes it's not...
-  DRIVER_SHT4X_LINK_INIT(&sht4x, sht4x_handle_t);
-  DRIVER_SHT4X_LINK_DEBUG_PRINT(&sht4x, debug_print);
-  DRIVER_SHT4X_LINK_DELAY_MS(&sht4x, libdriver_delay_ms);
-  DRIVER_SHT4X_LINK_IIC_INIT(&sht4x, libdriver_nop_void);
-  DRIVER_SHT4X_LINK_IIC_DEINIT(&sht4x, libdriver_nop_void);
-  DRIVER_SHT4X_LINK_IIC_READ_COMMAND(&sht4x, libdriver_iic_addr_read_noreg);
-  DRIVER_SHT4X_LINK_IIC_WRITE_COMMAND(&sht4x, libdriver_iic_addr_write_noreg);
-  sht4x_set_addr(&sht4x, SHT4X_ADDRESS_0);
-
-
-  DRIVER_SET_DEFAULT_IIC_ADDR16(SHTC3, &shtc3, shtc3_handle_t);
 
   DRIVER_TCA9548A_LINK_INIT(&tca9548a);
   DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
@@ -1038,12 +961,7 @@ int main()
 
   if (tca9548a_channel_set(&tca9548a, banks[2].channel) == 0)
   {
-    // black bloke responds with address 0x00 and it's not helpful at all...
-    // what kind of sensor it is?!
-    // purple without name responds with 0x00 and 0x44 is it's kind of
-    // SHT family
     while (1) {
-      // shtc3 default address is 0x70 so is mux... FFS
       printf("blah\n");
       // sht4x and sht3x has different protocol so when communication is
       // impossible for 4x try 3x and then call it a day
