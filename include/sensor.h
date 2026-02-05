@@ -31,10 +31,6 @@ inline void* arena_obtain(arena_t *arena, uint16_t size)
 
 struct any_sensor_s;
 typedef struct any_sensor_s any_sensor_t;
-typedef uint8_t (*any_sensor_f_1)(any_sensor_t*);
-typedef any_sensor_f_1 init_f;
-typedef any_sensor_f_1 deinit_f;
-typedef any_sensor_f_1 probe_f;
 
 typedef enum obtain_e
 {
@@ -42,15 +38,20 @@ typedef enum obtain_e
   OBTAIN_TEMPERATURE = 1 << 0,
   OBTAIN_PRESSURE = 1 << 1,
   OBTAIN_HUMIDITY = 1 << 2,
+
+  /* aliases */
+  OBTAIN_TH = OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY,
+  OBTAIN_THP = OBTAIN_TH | OBTAIN_PRESSURE,
 } obtain_t;
 
 struct any_sensor_s {
+  /* private sensor data */
   void *sensor;
 
-  uint8_t (*init)(any_sensor_t *ctx);
-  uint8_t (*deinit)(any_sensor_t *ctx);
+  /* check if sensor is valid and set configuration */
   uint8_t (*probe)(any_sensor_t *ctx);
-  /*
+
+  /* Read sensor data
     0 -> error
     Returned value is flag of following values:
     1 - temperature
@@ -59,8 +60,17 @@ struct any_sensor_s {
     8... - reserved for future
 
   */
-  obtain_t (*obtain)(any_sensor_t *ctx, int32_t *temperature, uint16_t *pressure, uint16_t *humidity);
+  obtain_t (*obtain)(any_sensor_t *ctx,
+    int32_t *temperature,
+    uint16_t *pressure,
+    uint16_t *humidity
+  );
 };
+
+typedef struct any_sensor_factory_s {
+  any_sensor_t* (*construct)(arena_t *arena);
+  void (*destroy)(any_sensor_t *ctx, arena_t *arena);
+} any_sensor_factory_t;
 
 /* Dummy funcion for empty (De)Init functions */
 static inline uint8_t sensor_noop(any_sensor_t *ctx)
@@ -68,9 +78,18 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
     return 0;
 }
 
-#define SENSOR_INIT(INIT, PROBE, OBTAIN, DEINIT) {.sensor = NULL, .init = INIT, .deinit = DEINIT, .probe = PROBE, .obtain = OBTAIN }
-#define SENSOR_INIT_ONLY(INIT, PROBE, OBTAIN) {.sensor = NULL, .init = INIT, .deinit = sensor_noop, .probe = PROBE, .obtain = OBTAIN }
+#define SENSOR_INIT(PROBE, OBTAIN) {.sensor = NULL, .probe = PROBE, .obtain = OBTAIN }
+#define SENSOR_FACTORY(MODULE, C, D) \
+  static any_sensor_factory_t sensor_factory_##MODULE = {.\
+    construct = C, .destroy = D \
+  }
+
+#define SENSOR_MODULE(MODULE, C, D, P, O) \
+  SENSOR_FACTORY(MODULE, C, D); \
+  static any_sensor_t sensor_##MODULE = SENSOR_INIT(P, O)
+
 #define DO_OR(F) if ((F)) { return 1; }; ((void)0)
+#define DO_ERR(F) if ((F)) { goto err; }; ((void)0)
 
 #define generate_generic_probe(MODULE) \
   static uint8_t sensor_##MODULE##_probe(any_sensor_t *ctx) \

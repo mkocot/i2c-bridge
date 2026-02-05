@@ -18,10 +18,12 @@ static i2c_device_t i2c = {
 static union {
   uint32_t u32;
   uint16_t u16;
+  int16_t i16;
 } tmp_raw_t;
 
 #define tmp_raw_temperature (tmp_raw_t.u32)
 #define tmp_raw_temperature16 (tmp_raw_t.u16)
+#define tmp_raw_temperaturei16 (tmp_raw_t.i16)
 
 static uint32_t tmp_raw_pressure;
 static float tmp_temperature;

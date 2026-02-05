@@ -140,20 +140,17 @@ static inline obtain_t sensor_shtc3_obtain(any_sensor_t *ctx, int32_t *temperatu
 
 generate_generic_probe(shtc3);
 
-static any_sensor_t sensor_sht3x = SENSOR_INIT_ONLY(
-  sensor_shtxx_init,
+static any_sensor_t sensor_sht3x = SENSOR_INIT(
   sensor_sht3x_probe,
   sensor_sht3x_obtain
 );
 
-static any_sensor_t sensor_sht4x = SENSOR_INIT_ONLY(
-  sensor_shtxx_init,
+static any_sensor_t sensor_sht4x = SENSOR_INIT(
   sensor_sht4x_probe,
   sensor_sht4x_obtain
 );
 
-static any_sensor_t sensor_shtc3 = SENSOR_INIT_ONLY(
-  sensor_shtc3_init,
+static any_sensor_t sensor_shtc3 = SENSOR_INIT(
   sensor_shtc3_probe,
   sensor_shtc3_obtain
 );
@@ -213,5 +210,9 @@ static any_sensor_t* sensor_shtc3_new(arena_t *arena)
 
   return &sensor_shtc3;
 }
+
+SENSOR_FACTORY(SHT3X, sensor_sht3x_new, NULL);
+SENSOR_FACTORY(SHT4X, sensor_sht4x_new, NULL);
+SENSOR_FACTORY(SHTC3, sensor_shtc3_new, NULL);
 
 #endif
