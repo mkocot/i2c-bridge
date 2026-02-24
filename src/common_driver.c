@@ -35,6 +35,13 @@ inline uint8_t libdriver_iic_addr_read(uint8_t addr, uint8_t reg, uint8_t *buf, 
   return libdriver_iic_read(reg, buf, len);
 }
 
+inline uint8_t libdriver_iic_addr_read_delay(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len, uint16_t ms)
+{
+  i2c.addr = addr >> 1;
+  i2c.regb = 1;
+  return i2c_read_reg_delay(&i2c, reg, buf, len, ms);
+}
+
 inline uint8_t libdriver_iic_addr_write(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
   i2c.addr = addr >> 1;
@@ -107,4 +114,44 @@ uint8_t libdriver_iic_addr16_write(uint8_t addr, uint16_t reg, uint8_t *buf, uin
   uint8_t ret = i2c_write_reg(&i2c, reg, buf, len);
   printf("A16W: %X, %X, %u %u =%u\n", i2c.addr, reg, i2c.regb, len, ret);
   return ret;
+}
+
+inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len)
+{
+  spi_begin_transaction(&spi);
+
+  printf("W: reg=%X, len=%d\n", reg, len);
+  spi_send8(reg);
+  for (int i = 0; i < len; ++i)
+  {
+    spi_send8(buf[i]);
+  }
+
+  spi_end_transaction(&spi);
+
+  return 0;
+}
+
+inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len)
+{
+  /* NOTE(m): libdriver will is putting 1 at 8th bit, it's ok as BME280 is using
+     7bit register
+  */
+  spi_begin_transaction(&spi);
+
+  printf("R: reg=%X, len=%d\n", reg, len);
+  spi_send8(reg);
+  printf("Data: ");
+  // 2240 0 4 2244 8c4
+  for (int i = 0; i < len; ++i)
+  {
+    buf[i] = spi_recv8(buf[i]);
+
+    printf("%X ", buf[i]);
+  }
+  printf("\n");
+
+  spi_end_transaction(&spi);
+
+  return 0;
 }

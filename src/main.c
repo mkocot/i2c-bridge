@@ -1,7 +1,12 @@
 #include "ahtxx.h"
 #include "bmp280.h"
 #include "common_driver.h"
+#include "hdc1080.h"
 #include "shtxx.h"
+#include "spi.h"
+#include "si7021.h"
+#include "htuxx.h"
+#include "mcp9808.h"
 
 #include <alloca.h>
 #include <stdio.h>
@@ -11,6 +16,10 @@
 #include <ch32v003_SPI.h>
 
 #include <lib_i2c.h>
+#include <driver_tca9548a.h>
+#include <driver_max31865.h>
+
+#if 0
 #include <driver_aht20.h>
 #include <driver_aht30.h>
 #include <driver_bmp280.h>
@@ -18,19 +27,18 @@
 #include <driver_sht4x.h>
 #include <driver_shtc3.h>
 #include <driver_si7021.h>
-#include <driver_tca9548a.h>
 #include <driver_hdc1080.h>
 #include <driver_htu21d.h>
 #include <driver_htu31d.h>
-#include <driver_max31865.h>
 #include <driver_mcp9808.h>
+#endif
 
 /* for debug */
 #include <driver_bme280.h>
 
 
 /* get maximum bytes required per struct */
-#if 1
+#if 0
 #define ss(X) sizeof(X)
 #define SS(X, Y) MAX(ss(X), ss(Y))
 #define MS(X, Y) MAX(X, ss(Y))
@@ -52,67 +60,43 @@ const int max_struct = MS(MS(MS(MS(MS(MS(MS(MS(MS(MS(SS(aht20_handle_t, aht30_ha
  * aht20 and aht30 is same driver with slightly different handling so onse only aht30.
  * 
  * Reducing max usage to 4 * 120 + (48 (aht) + 56 (sht3x) + 48 (sht4x) + 56 (shtc3)) -> 688
- */
+*/
 
+typedef enum
+{
+  SENSOR_AHT = 1 << 0,
+  SENSOR_BMP280 = 1 << 1,
+  SENSOR_BME280 = 1 << 2,
+  SENSOR_SHT3X = 1 << 3,
+  SENSOR_SHT4X = 1 << 4,
+  SENSOR_SHTC3 = 1 << 5,
+  SENSOR_HTU21D = 1 << 6,
+  SENSOR_HTU31D = 1 << 7,
+  SENSOR_SI7021 = 1 << 8,
+  SENSOR_HDC1080 = 1 << 9,
+} sensor_t;
 
-/* can be shared between banks with "init" hack */
-// static sht35_handle_t sht35;
-// static sht4x_handle_t sht4x;
-// static shtc3_handle_t shtc3;
-// static si7021_handle_t si7021; 
-// static hdc1080_handle_t hdc1080;
-static htu21d_handle_t htu21d;
-// static htu31d_handle_t htu31d;
-// static mcp9808_handle_t mcp9808;
+typedef struct supported_sensor_e {
+  sensor_t sensor;
+  any_sensor_factory_t *factory;
+} supported_sensor_t;
 
-// /* requires unique instance per bank */
-// static bmp280_handle_t bmp280s[4];
+// NOTE: BMP280 can be mixed with AHT30
+static supported_sensor_t supported_sensors[] = {
+  {SENSOR_AHT, &sensor_factory_AHTXX},
+  {SENSOR_BMP280, &sensor_factory_BMP280},
+  {SENSOR_HDC1080, &sensor_factory_HDC1080},
+  {SENSOR_HTU31D, &sensor_factory_HTU31D},
+  {SENSOR_HTU21D, &sensor_factory_HTU21D},
+  {SENSOR_SHT3X, &sensor_factory_SHT3X},
+  {SENSOR_SHT4X, &sensor_factory_SHT4X},
+  {SENSOR_SHTC3, &sensor_factory_SHTC3},
+  {SENSOR_SI7021, &sensor_factory_SI7021},
+};
 
-// Only AHT20 and BMP280 can coexist on single bank
-// this simplifies check, as already occupied bank will no change composition
-// when other sensors are detected
+#define supported_sensors_length (sizeof(supported_sensors) / sizeof(supported_sensors[0]))
 
-
-// generate_generic_probe(hdc1080);
-
-// static uint8_t sensor_hdc1080_init(any_sensor_t *ctx)
-// {
-//   return 0;
-// }
-
-// static uint8_t sensor_hdc1080_deinit(any_sensor_t *ctx)
-// {
-//   return 0;
-// }
-
-// static obtain_t sensor_hdc1080_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
-// {
-//   if (hdc1080_read_temperature_humidity)
-//   {
-//     return OBTAIN_ERROR;
-//   }
-
-//   return OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY;
-// }
-
-// static any_sensor_t sensor_hdc1080 = SENSOR_INIT(
-//   sensor_hdc1080_probe,
-//   sensor_hdc1080_init,
-//   sensor_hdc1080_deinit,
-//   sensor_hdc1080_obtain
-// );
-
-// generate_generic_probe(bmp280);
-// generate_generic_probe(htu21d);
-// generate_generic_probe(htu31d);
-// generate_generic_probe(mcp9808);
-// generate_generic_probe(sht4x);
-// generate_generic_probe(sht35);
-// generate_generic_probe(shtc3);
-// generate_generic_probe(si7021);
-
-
-static uint8_t arena_pool[707];
+static uint8_t arena_pool[1024];
 
 /* single SPI connected sensor*/
 static max31865_handle_t max31865;
@@ -120,155 +104,7 @@ static max31865_handle_t max31865;
 static tca9548a_handle_t tca9548a;
 // sht, dht, ...
 
-/* SPI Mode Definition */
-#define HOST_MODE 0
-#define SLAVE_MODE 1
 
-/* SPI Communication Mode Selection */
-#define SPI_MODE HOST_MODE
-
-#define SPI_CS_PIN GPIO_Pin_3
-#define SPI_CS_PORT GPIOC
-
-struct spi_device_s
-{
-  /* use hardware or software NSS */
-  uint8_t nss_pin;
-  uint8_t regb;
-};
-
-typedef struct spi_device_s spi_device_t;
-
-typedef enum spi_mode_e {
-  SPI_MODE00 = SPI_CPOL_Low | SPI_CPHA_1Edge,
-  SPI_MODE01 = SPI_CPOL_Low | SPI_CPHA_2Edge,
-  SPI_MODE10 = SPI_CPOL_High | SPI_CPHA_1Edge,
-  SPI_MODE11 = SPI_CPOL_High | SPI_CPHA_2Edge,
-  /* aliases */
-  SPI_MODE0 = SPI_MODE00,
-  SPI_MODE3 = SPI_MODE11,
-  /* mask */
-  SPI_MODE_MASK = SPI_MODE11,
-} spi_mode_t;
-
-typedef enum spi_frame_e {
-  SPI_FRAME_8BITS,
-  SPI_FRAME_16BITS,
-} spi_frame_t;
-
-
-typedef enum spi_byte_order_e {
-  SPI_MSB_FIRST,
-  SPI_LSB_FIRST,
-} spi_byte_order_t;
-
-uint8_t spi_begin_transaction(spi_device_t *handle);
-uint8_t spi_end_transaction(spi_device_t *handle);
-
-spi_device_t spi;
-
-#define FUN_OUTPUT_MULTIPLEXED (GPIO_CFGLR_OUT_10Mhz_AF_PP)
-
-// static uint8_t spi_init_software_nss(uint8_t pin)
-// {
-//   funPinMode(pin, GPIO_CFGLR_IN_PUPD);
-
-//   return 0;
-// }
-static uint8_t spi_off()
-{
-  /* Disable clock for SPI1 (GPIO C might be used somewhere else) */
-	RCC->APB2PCENR &= ~RCC_APB2Periph_SPI1;
-
-  return 0;
-}
-
-static uint8_t spi_on()
-{
-  /* enable GPIO C */
-  funGpioInitC();
-
-  /* Start clocks for: GPIO C and SPI1 */
-	RCC->APB2PCENR |= RCC_APB2Periph_SPI1 | RCC_APB2Periph_GPIOC;
-
-  return 0;
-}
-
-static uint8_t spi_init(spi_device_t *handle, uint8_t nss_pin, spi_mode_t mode, spi_frame_t frame_size, spi_byte_order_t msb_first)
-{
-  if (frame_size != 8 && frame_size != 16)
-  {
-    return 1;
-  }
-
-  handle->nss_pin = nss_pin;
-  handle->regb = frame_size;
-
-  funGpioInitC();
-  //Enable clock for PORTC, SPI1
-  RCC->APB2PCENR |= RCC_IOPCEN | RCC_APB2Periph_SPI1;
-
-  funPinMode(PC7, FUN_INPUT);               // MISO (17)
-  funPinMode(PC6, FUN_OUTPUT_MULTIPLEXED);  // MOSI (16)
-  funPinMode(PC5, FUN_OUTPUT_MULTIPLEXED);  // SCK (15)
-  // Hardware Master or Slave mode:
-  //  Float, pull-up or pull-down input
-  // Hardware Master mode/NSS output enable mode:
-  //  Push-pull multiplexed output 
-  if (!handle->nss_pin)
-  {
-    funPinMode(PC1, FUN_OUTPUT_MULTIPLEXED);  // NSS (11)
-    // Enable SS output
-    SPI1->CTLR2 = CTLR2_SSOE_Set;
-  }
-  else
-  {
-    funPinMode(handle->nss_pin, FUN_OUTPUT_MULTIPLEXED);// GPIO_CFGLR_IN_PUPD);
-    // SPI_Mode_Master can only be selected when using HARDWARE control
-    // or SS is alredy pulled HIGH on SOFTWARE control
-    spi_end_transaction(handle);
-  }
-
-  SPI1->CTLR1 = 0;
-
-  // on ESP
-  // 1MHz, MSB, MODE0
-  // MODE0 == CPHA=0, cpol=0
-  uint16_t config = SPI_Mode_Master;
-  // full duplex
-  config |= SPI_Direction_2Lines_FullDuplex;
-  // 24Mhz@48MHz MCU
-  // BR -> Configure clock
-  config |= SPI_BaudRatePrescaler_16; // 48 / 16 -> 3
-  // // SPIMODE(0,0) AKA MODE0: CPOL and CPHA is 0
-  // config |= SPI_CPOL_Low | SPI_CPHA_1Edge;
-  config |= mode & SPI_MODE_MASK;
-  // DEF set to 8bits (value 0)
-  config |= handle->regb == 8 ? SPI_DataSize_8b : SPI_DataSize_16b;
-
-  // Frame Format is MSB (value 0)
-  // config |= msb_first ? SPI_FirstBit_MSB : SPI_CTLR1_LSBFIRST; 
-  config |= SPI_FirstBit_MSB;
-
-  // SSM 1: software control, 0: hardware controle
-  config |= handle->nss_pin ? SPI_NSS_Soft : SPI_NSS_Hard;
-  // config |= SPI_NSS_Soft;
-
-  // SSI (1-> NSS pin is HIGH, 0 -> NSS pin is LOW on selection)
-  // REQUIRED TO BE 1
-  config |= SPI_NSSInternalSoft_Set;
-
-  // Enable SPI
-  // config |= SPI_CTLR1_SPE;
-
-
-  //Set SPI1, max clock 48Mhz/2 = 24Mhz, master mode, full-duplex mode,8bit data length
-	//Internal slave select and software slave managment
-	// SPI1->CTLR1 = SPI_CTLR1_SSI | SPI_CTLR1_SSM | SPI_CTLR1_MSTR; //| SPI_CTLR1_BR_1 | SPI_CTLR1_BR_0;
-  SPI1->CTLR1 = config;
-
-}
-#define SPI_DELAY 100
 #if 0
 void SPISendBytes(uint8_t *sendData, uint32_t length)
 {
@@ -322,114 +158,9 @@ void SPISendReceiveBytes(uint8_t *sendData, uint8_t *getData, uint32_t length)
 }
 #endif
 
-/* 1：Tx buffer empty */
-#define SPI_WAIT_FOR_EMPTY_TX() \
-  do {} while((SPI1->STATR & SPI_STATR_TXE) != SPI_STATR_TXE)
-
-/* 1：SPI is busy in communication or Tx buffer is not empty */
-#define SPI_WAIT_FOR_IDLE() \
-	do {} while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY)
-
-/* 1：Rx buffer not empty */
-#define SPI_WAIT_FOR_RX_AVAILABLE() \
-	do {} while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE)
-
-
-#define SPI_WAIT_TRANSFER_COMPLETE() \
-  do { SPI_WAIT_FOR_EMPTY_TX(); SPI_WAIT_FOR_IDLE() } while (0)
-
-
-void spi_send8(uint8_t data)
-{
-  SPI_WAIT_FOR_EMPTY_TX();
-
-	SPI1->DATAR = data;
-  SPI_WAIT_FOR_IDLE();
-
-  // not required?
-	// while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE){};
-
-  /* WARNING: discaring result is mandatory */
-  data = (uint8_t)SPI1->DATAR;
-}
-
-uint8_t spi_recv8(uint8_t dummy)
-{
-	SPI1->DATAR = dummy;
-  SPI_WAIT_FOR_RX_AVAILABLE();
-	
-	return (uint8_t)SPI1->DATAR;
-}
 
 static void loop();
 
-static inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  spi_begin_transaction(&spi);
-
-  printf("W: reg=%X, len=%d\n", reg, len);
-  spi_send8(reg);
-  for (int i = 0; i < len; ++i)
-  {
-    spi_send8(buf[i]);
-  }
-
-  spi_end_transaction(&spi);
-
-  return 0;
-}
-
-static inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len)
-{
-  /* NOTE(m): libdriver will is putting 1 at 8th bit, it's ok as BME280 is using
-     7bit register
-  */
-  spi_begin_transaction(&spi);
-
-  printf("R: reg=%X, len=%d\n", reg, len);
-  spi_send8(reg);
-  printf("Data: ");
-  // 2240 0 4 2244 8c4
-  for (int i = 0; i < len; ++i)
-  {
-    buf[i] = spi_recv8(buf[i]);
-
-    printf("%X ", buf[i]);
-  }
-  printf("\n");
-
-  spi_end_transaction(&spi);
-
-  return 0;
-}
-
-uint8_t spi_begin_transaction(spi_device_t *handle)
-{
-  {
-    SPI1->CTLR1 |= SPI_CTLR1_SPE;
-  }
-
-  if (handle->nss_pin)
-  {
-    funDigitalWrite(handle->nss_pin, FUN_HIGH);
-  }
-
-  return 0;
-
-}
-
-uint8_t spi_end_transaction(spi_device_t *handle)
-{
-  {
-    SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
-  }
-  if (handle->nss_pin)
-  {
-    funDigitalWrite(handle->nss_pin, FUN_LOW);
-  }
-  
-  return 0;
-}
 
 uint8_t spi_send_receive(const uint8_t *data, const uint8_t data_len, uint8_t *recv, const uint8_t recv_len)
 {
@@ -473,7 +204,14 @@ uint8_t spi_send_receive(const uint8_t *data, const uint8_t data_len, uint8_t *r
 void spi_fun(void)
 {
   #if 1
-  spi_init(&spi, 0, SPI_MODE00, 8, 1);
+  spi_init_t cfg = {
+    .byte_order = SPI_MSB_FIRST,
+    .frame_size = SPI_FRAME_8BITS,
+    .mode = SPI_MODE0,
+    .nss_pin = PC0,
+  };
+
+  spi_init(&spi, &cfg);
 
   while(1) {
     uint64_t cycles = SysTick->CNT;
@@ -492,7 +230,7 @@ void spi_fun(void)
     printf("Chip id: %X (%04d)\n", chip_id, (int)elapsed);
     Delay_Ms(2000);
 
-    break;
+    // break;
   }
 
   return;
@@ -652,7 +390,7 @@ void spi_fun(void)
 
   bme280_set_interface(&bme, BME280_INTERFACE_SPI);
 
-  spi_init(&spi, 0, SPI_MODE0, 8, 1);
+  spi_init(&spi, &cfg);
 
   printf("I = %d\n", bme.inited);
 
@@ -736,15 +474,6 @@ static inline uint8_t tca9548a_iic_read(uint8_t *buf, uint16_t len)
 
 #define DEBUG_DATA0_ADDRESS ((volatile uint32_t *)0xE00000F4)
 
-typedef enum
-{
-  SENSOR_AHT = 1 << 0,
-  SENSOR_BMP280 = 1 << 1,
-  SENSOR_BME280 = 1 << 2,
-  SENSOR_SHT3X = 1 << 3,
-  SENSOR_SHT4X = 1 << 4,
-  SENSOR_SHTC3 = 1 << 5,
-} sensor_t;
 
 // SHTXX share same address, only one is possible
 #define SENSOR_SHTXX (SENSOR_SHT3X | SENSOR_SHT4X)
@@ -762,6 +491,7 @@ struct bank_t
   // If sensor is present then it was inited before, otherwise initialization
   // is required before acquiring any data
   sensor_t sensors;
+  arena_t arena;
 };
 
 struct bank_t banks[4] = {
@@ -799,16 +529,50 @@ static void tca9548a_reset(tca9548a_handle_t *handle)
 }
 
 
-static sensor_t sensor_check(const sensor_t sensor, const uint8_t address, sensor_t *remaining)
+// 0 - OK
+// 1 - nothing detected
+static uint8_t sensor_check(supported_sensor_t *supported_sensor, uint8_t *addr, uint8_t *response, arena_t *arena)
 {
-  if (*remaining & sensor == 0 || i2c_ping(address) != I2C_OK)
+    if (supported_sensor->factory->address != *addr)
+    {
+      *addr = supported_sensor->factory->address;
+      *response = i2c_ping(*addr)== I2C_OK;
+    }
+
+    if (!*response)
+    {
+      return 1;
+    }
+
+    any_sensor_t *sensor = supported_sensor->factory->construct(arena);
+    if (sensor == NULL)
+    {
+      return 1;
+    }
+
+    if (sensor->probe(sensor))
+    {
+      return 0;
+    }
+
+    if (supported_sensor->factory->destroy)
+    {
+      supported_sensor->factory->destroy(sensor, arena);
+    }
+
+    return 1;
+}
+
+static supported_sensor_t *find_sensor(sensor_t type)
+{
+  for (int i = 0; i < supported_sensors_length; ++i)
   {
-    return 0;
+    if (supported_sensors[i].sensor == type)
+    {
+      return &supported_sensors[i];
+    }
   }
-
-  *remaining &= ~sensor;
-
-  return sensor;
+  return NULL;
 }
 
 static uint8_t bank_check_new(struct bank_t *bank)
@@ -821,119 +585,80 @@ static uint8_t bank_check_new(struct bank_t *bank)
     return 1;
   }
 
-  // ping only not detected addresses, leave droppping to active phase
-  sensor_t sensors_to_check = SENSOR_ALL & ~bank->sensors;
-  
-  if (bank->sensors & SENSOR_SHTXX)
+  if ((bank->sensors & (SENSOR_BMP280 | SENSOR_AHT)) == (SENSOR_BMP280 | SENSOR_AHT))
   {
-    // When any SHT is detected drop other one from check
-    sensors_to_check &= ~SENSOR_SHTXX;
+    /* bank has bmp280 and aht nothing more to check*/
+    return 0;
   }
 
-  // Detection phase
-  sensor_t new_config = 0;
-  new_config |= sensor_check(SENSOR_BMP280, BMP280_ADDRESS, &sensors_to_check);
-  new_config |= sensor_check(SENSOR_BME280, BME280_ADDRESS, &sensors_to_check);
-  // Special case: add both sensor as detected, checked at active phase
-  new_config |= sensor_check(SENSOR_SHTXX, SHTXX_ADDRESS, &sensors_to_check);
-  new_config |= sensor_check(SENSOR_AHT, AHTXX_ADDRESS, &sensors_to_check);
-  new_config |= sensor_check(SENSOR_SHTC3, SHTC3_ADDRESS, &sensors_to_check);
+  uint8_t addr = 0;
+  uint8_t response = 0;
 
-  // Init phase
-  
-  if (new_config & SENSOR_AHT)
+  if (bank->sensors & SENSOR_BMP280)
   {
-    printf("Detected AHT\n");
-    // there is only one 3x or 2x
-    aht30_iic_init();
-    aht30_deinit(&aht30);
+    if (i2c_ping(sensor_factory_AHTXX.address) != I2C_OK)
+    {
+      /* no companion */
+      return 0;
+    }
 
-    if (aht30_init(&aht30))
+    supported_sensor_t *supported = find_sensor(SENSOR_AHT);
+    if (supported == NULL)
     {
-      printf("No AHT30\n");
+      return 1;
     }
-    else
+
+    if (sensor_check(supported, &addr, &response, &bank->arena))
     {
-      printf("Found AHT30\n");
-      bank->sensors |= SENSOR_AHT;
+      return 1;
     }
+
+    bank->sensors |= supported->sensor;
+
+    return 0;
+  }
+  else if (bank->sensors & SENSOR_AHT)
+  {
+    /* has bmp280 or aht check for possible companion */
+    if (i2c_ping(sensor_factory_BMP280.address) != I2C_OK)
+    {
+      /* no companion */
+      return 0;
+    }
+
+    supported_sensor_t *supported = find_sensor(SENSOR_BMP280);
+    if (supported == NULL)
+    {
+      return 1;
+    }
+
+    if (sensor_check(supported, &addr, &response, &bank->arena))
+    {
+      return 1;
+    }
+
+    bank->sensors |= supported->sensor;
+
+    return 0;
+  } 
+  else if (bank->sensors)
+  {
+    /* if bank has any other sensor then nothing else to check */
+    return 0;
   }
 
-  if (new_config & SENSOR_BME280)
+  for (int i = 0; i < supported_sensors_length; ++i)
   {
-    // not supported
-    printf("Detected BME280\n");
+    supported_sensor_t *supported_sensor = &supported_sensors[i];
+    if (sensor_check(supported_sensor, &addr, &response, &bank->arena))
+    {
+      continue;
+    }
+
+    bank->sensors |= supported_sensor->sensor;
   }
 
-  // Changed and is now active
-  if (new_config & SENSOR_BMP280)
-  {
-    printf("Detected BMP280\n");
-
-    // this is tricky and smelly as first you need to deinit it (due to shared struct)
-    bmp280_iic_init();
-    bmp280_deinit(&bmp280);
-
-    if (setupBMP280())
-    {
-      printf("Bummer no BMP280\n");
-    }
-    else
-    {
-      printf("BMP280 activated\n");
-      bank->sensors |= SENSOR_BMP280;
-    }
-
-    if (new_config & SENSOR_SHTXX)
-    {
-      printf("Detected SHTXX\n");
-      // check from higher to lower version
-      sht4x_iic_init();
-      sht4x_deinit(&sht4x);
-      if (sht4x_init(&sht4x))
-      {
-        printf("No SHT4x\n");
-      }
-      else
-      {
-        printf("Found SHT4x\n");
-        bank->sensors |= SENSOR_SHT4X;
-        goto sht3x_skip;
-      }
-
-      sht3x_iic_init();
-      sht35_deinit(&sht35);
-      if (sht35_init(&sht35))
-      {
-        printf("No SHT3x\n");
-      }
-      else
-      {
-        printf("Found SHT3x\n");
-        bank->sensors |= SENSOR_SHT3X;
-      }
-
-      /* exit SHTX check */
-      sht3x_skip:
-    }
-
-    if (new_config & SENSOR_SHTC3)
-    {
-      printf("Detected SHTC3\n");
-      
-      shtc3_iic_init();
-      shtc3_deinit(&shtc3);
-      if (shtc3_init(&shtc3))
-      {
-        printf("No SHTC3\n");
-      }
-      else
-      {
-        printf("Found SHTC3\n");
-        bank->sensors |= SENSOR_SHTC3;
-      }
-    }
-  }
+  return 0;
 }
 
 /* MUX configuration is out of this scope */
@@ -1109,17 +834,20 @@ void asdf() {
 
 #define CALCULATED_HPRE_DIV ((((HSI_VALUE) / (FUNCONF_SYSTEM_CORE_CLOCK)) - 1) << 4)
 
-#if (CALCULATED_HPRE_DIV + 1) * HSI_VALUE == FUNCONF_SYSTEM_CORE_CLOCK
-#error Requested clock is not multiplication or division of 24MHz
-#endif
-#if CALCULATED_HPRE_DIV & ~0xF0
-#error Expected system core clock is too low
+#if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
+# if (CALCULATED_HPRE_DIV + 1) * HSI_VALUE == FUNCONF_SYSTEM_CORE_CLOCK
+#   error Requested clock is not multiplication or division of 24MHz
+# endif
+# if CALCULATED_HPRE_DIV & ~0xF0
+#   error Expected system core clock is too low
+# endif
 #endif
 
 int main()
 {
   SystemInit();
 
+  #if 1
   printf("Awaiting DOOM\n");
   #define DOOM 10
   for (int i = 0; i < DOOM; ++i) {
@@ -1129,7 +857,8 @@ int main()
   printf("Doom\n");
 
   // Check if there is ANY reasons to run it clocks other than 8MHz
-  #if defined(FUNCONF_SYSTEM_CORE_CLOCK) && FUNCONF_SYSTEM_CORE_CLOCK != 48000000
+  // Running at native is supported by default
+  #if 0 && defined(FUNCONF_SYSTEM_CORE_CLOCK) && FUNCONF_SYSTEM_CORE_CLOCK != HSI_VALUE * (FUNCONF_PLL_MULTIPLIER + FUNCONF_USE_PLL)
     // no-os framework
     // RCC->CTLR |= (uint32_t)0x00000001;
     // RCC->CFGR0 &= (uint32_t)0xF8FF0000;
@@ -1175,30 +904,14 @@ int main()
 
   printf("Hello?\n");
 
+# if 1
   printf("Testing clock; each output should be printed in 1 second delay\n");
   for (int i = 0; i < DOOM; ++i) {
     Delay_Ms(1000);
     printf("TICK\n");
   }
-
-  DRIVER_HTU21D_LINK_INIT(&htu21d, htu21d_handle_t);
-  DRIVER_HTU21D_LINK_DEBUG_PRINT(&htu21d, debug_print);
-  DRIVER_HTU21D_LINK_DELAY_MS(&htu21d, libdriver_delay_ms);
-  DRIVER_HTU21D_LINK_IIC_DEINIT(&htu21d, libdriver_nop_void);
-  DRIVER_HTU21D_LINK_IIC_INIT(&htu21d, libdriver_nop_void);
-  DRIVER_HTU21D_LINK_IIC_READ(&htu21d, libdriver_iic_addr_read);
-  DRIVER_HTU21D_LINK_IIC_READ_CMD(&htu21d, libdriver_iic_read);
-  DRIVER_HTU21D_LINK_IIC_READ_WITH_SCL(&htu21d, libdriver_iic_addr_read);
-  DRIVER_HTU21D_LINK_IIC_WRITE(&htu21d, libdriver_iic_addr_write);
-  DRIVER_HTU21D_LINK_IIC_WRITE_CMD(&htu21d, libdriver_iic_write);
-
-  htu21d_init(&htu21d);
-  htu21d_set_resolution(&htu21d, HTU21D_RESOLUTION_TEMP_14_BITS_RH_12_BITS);
-  float t, h;
-  uint16_t t_raw, h_raw;
-  htu21d_read_temperature_humidity(&htu21d, &t_raw, &t, &h_raw, &h);
-  printf("asdf: %d %d\n", (int)(t * 100), (int)(h * 100));
-
+# endif /* 0 */
+#endif
   // #define RCC_CSS 0 /* disable */
   // #define HSEBYP 0 /* HSE bypass (disable) */
 
@@ -1217,32 +930,12 @@ int main()
 
   // SetupDebugPrintf();
 
-  // *(DEBUG_DATA0_ADDRESS) = 0;
-  // PD1
-  // 1) Enable GPIOD
-  // PIN1 -> IPU
-  // while(1) {
-  // printf("ASDF\n");
-  // Delay_Ms(1000);
-  // }
 
-
-  init_bmp280();
-
-  DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
-  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, NULL);
-  DRIVER_MAX31865_LINK_DELAY_MS(&max31865, libdriver_delay_ms);
-  DRIVER_MAX31865_LINK_INIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_DEINIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
-  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, libdriver_spi_write);
-
-
-  DRIVER_TCA9548A_LINK_INIT(&tca9548a);
-  DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
-  DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
-  DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
-  tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0);
+  // DRIVER_TCA9548A_LINK_INIT(&tca9548a);
+  // DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
+  // DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
+  // DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
+  // tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0);
 
   i2c_err_t err = i2c_init(&i2c);
   if (err)
@@ -1250,7 +943,28 @@ int main()
     printf("Error in init: %d\n", err);
   }
 
+  spi_init_t cfg = {
+    .byte_order = SPI_MSB_FIRST,
+    .frame_size = SPI_FRAME_8BITS,
+    .mode = SPI_MODE00,
+    .nss_pin = PC0,
+  };
+  spi_init(&spi, &cfg);
+
   Delay_Ms(250);
+
+  // "szeroki" 0x18
+  // "malutki" 0x40
+  // htu31d 0x40
+  // while(1) {
+  //   printf("SKAN\n");
+  //   i2c.tout *= 1;
+  //   i2c_init(&i2c);
+  //   Delay_Ms(1000);
+  //   i2c_scan(i2c_scan_callback);
+  //   printf("SKAN END\n");
+  //   Delay_Ms(2000);
+  // }
 
   // printf("Let's the scan begin\n");
   // i2c_scan(i2c_scan_callback);
@@ -1259,6 +973,43 @@ int main()
   // It's OPEN DRAIN mode, so by default it uses TCA5498A board resistor
   // to keep reset pin high
   Delay_Ms(2000);
+
+  int32_t t;
+  uint16_t p;
+  uint16_t h;
+
+  int probed = 0;
+  // any_sensor_t* sensor = sensor_factory_HDC1080.construct(NULL);
+  any_sensor_t* sensor = sensor_factory_HTU31D.construct(NULL);
+
+  while(1)
+  {
+    if (probed == 0 && sensor->probe(sensor))
+    {
+       printf("probe failed\n");
+    }
+    else
+    {
+      if (probed == 0) {
+        printf("probe OK\n");
+      }
+
+      probed = 1;
+
+      if (sensor->obtain(sensor, &t, &p, &h) == OBTAIN_ERROR)
+      {
+        printf("obtain failed\n");
+        probed = 0;
+      }
+      else
+      {
+        printf("obtain OK\n");
+      }
+    }
+    Delay_Ms(2000);
+  }
+
+  sensor_factory_MCP9808.destroy(sensor, NULL);
 
   while (1)
   {
@@ -1327,10 +1078,14 @@ int main()
 
 void loop()
 {
+
+  // full precision first read and then diff for rest?
   
   printf("LOOP\n");
   for (unsigned b = 0; b < sizeof(banks)/sizeof(banks[0]); ++b)
   {
+    bank_check_new(&banks[b]);
+
     arena_pool[b] = banks[b].sensors;
     printf("Set bank: %d@%d\n", b, banks[b].channel);
     if (tca9548a_channel_set(&tca9548a, banks[b].channel))
@@ -1342,10 +1097,11 @@ void loop()
     i2c_scan(i2c_scan_callback);
   }
 
-  tca9548a_reset(&tca9548a);
+  // tca9548a_reset(&tca9548a);
   Delay_Ms(2000);
 
   return;
+  #if 0
 
   for (unsigned i = 0; i < sizeof(banks) / sizeof(banks[0]); ++i)
   {
@@ -1415,6 +1171,7 @@ void loop()
       }
     }
   }
+    #endif
   // printf("Let's the scan begin\n");
   // i2c_scan(i2c_scan_callback);
   // printf("Scan done\n");
