@@ -16,6 +16,69 @@ static shtc3_handle_t shtc3;
 #define SHTXX_ADDRESS (0x44)
 #define SHTC3_ADDRESS (0x70)
 
+static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t *buf, uint16_t len)
+{
+  i2c.addr = addr >> 1;
+  i2c.regb = 2;
+
+  uint8_t ret;
+
+  /*
+  * fetching data in 'single shot' is taking absurd 12ms. Setting this timeout
+  * in i2c driver will be hard penalty during communication with other devices
+  * to fix it we are using delayed read only for 2 commands. Anyway MCU could
+  * do something usefull in that time...
+  */
+  switch (reg >> 8)
+  {
+    case 0x24: /* single read without clock stretching */
+      /* fallthrough */
+    case 0x2C: /* single read with clock stretching */
+      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 12);
+      break;
+    case 0xE0: /* sht35_continuous_read */
+      /* fallthrough */
+    default:
+      ret = i2c_read_reg(&i2c, reg, buf, len);
+      break;
+  }
+
+  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+
+  return ret;
+}
+
+static uint8_t sensor_shtc3_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t *buf, uint16_t len)
+{
+  i2c.addr = addr >> 1;
+  i2c.regb = 2;
+
+  uint8_t ret;
+  /* SHTC3 driver, see above
+    * Low Power mode: ~ 0.7ms  0.8ms max
+    * Normal mode   : 10.8ms   12.1ms max
+    */
+  switch (reg >> 8)
+  {
+    case 0x78: /* T without clock stretch */
+      /* fallthrough */
+    case 0x7C: /* T with clock stretch */
+      /* fallthrough */
+    case 0x58: /* RH without clock stretch */
+      /* fallthrough */
+    case 0x5C: /* RH with clock stretch */
+      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 11);
+      break;
+    default:
+      ret = i2c_read_reg(&i2c, reg, buf, len);
+      break;
+  }
+
+  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+
+  return ret;
+}
+
 static inline uint8_t sensor_shtc3_init()
 {
   i2c.addr = SHTC3_ADDRESS;
@@ -160,12 +223,13 @@ static any_sensor_t* sensor_sht3x_new(arena_t *arena)
   if (sensor_sht3x.sensor == NULL)
   {
     DRIVER_SET_DEFAULT_IIC_ADDR16(SHT35, &sht35, sht35_handle_t);
+    /* SHT35 driver requirese special handling of read delays */
+    DRIVER_SHT35_LINK_IIC_READ_ADDRESS16(&sht35, sensor_sht3x_iic_addr16_read);
     // DRIVER_SHT35_LINK_INIT(&sht35, sht35_handle_t);
     // DRIVER_SHT35_LINK_DEBUG_PRINT(&sht35, debug_print);
     // DRIVER_SHT35_LINK_DELAY_MS(&sht35, libdriver_delay_ms);
     // DRIVER_SHT35_LINK_IIC_INIT(&sht35, libdriver_nop_void);
     // DRIVER_SHT35_LINK_IIC_DEINIT(&sht35, libdriver_nop_void);
-    // DRIVER_SHT35_LINK_IIC_READ_ADDRESS16(&sht35, libdriver_iic_addr16_read);
     // DRIVER_SHT35_LINK_IIC_WRITE_ADDRESS16(&sht35, libdriver_iic_addr16_write);
     sht35_set_addr_pin(&sht35, SHT35_ADDRESS_0);
 
@@ -204,6 +268,7 @@ static any_sensor_t* sensor_shtc3_new(arena_t *arena)
   if (sensor_shtc3.sensor == NULL)
   {
     DRIVER_SET_DEFAULT_IIC_ADDR16(SHTC3, &shtc3, shtc3_handle_t);
+    DRIVER_SHTC3_LINK_IIC_READ_ADDRESS16(&shtc3, sensor_shtc3_iic_addr16_read);
 
     sensor_shtc3.sensor = &shtc3;
   }
@@ -211,8 +276,8 @@ static any_sensor_t* sensor_shtc3_new(arena_t *arena)
   return &sensor_shtc3;
 }
 
-SENSOR_FACTORY(SHT3X, sensor_sht3x_new, NULL);
-SENSOR_FACTORY(SHT4X, sensor_sht4x_new, NULL);
-SENSOR_FACTORY(SHTC3, sensor_shtc3_new, NULL);
+SENSOR_FACTORY(SHT3X, SHTXX_ADDRESS, sensor_sht3x_new, NULL);
+SENSOR_FACTORY(SHT4X, SHTXX_ADDRESS, sensor_sht4x_new, NULL);
+SENSOR_FACTORY(SHTC3, SHTC3_ADDRESS, sensor_shtc3_new, NULL);
 
 #endif

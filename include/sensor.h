@@ -11,28 +11,41 @@
 
 typedef struct arena_s arena_t;
 struct arena_s {
-    void *memory;
+    const void *memory;
     void *end;
     void *now;
 };
 
-inline void* arena_obtain(arena_t *arena, uint16_t size)
+inline uint8_t arena_init(arena_t *arena, void *pool, size_t size)
 {
-    if (arena->now + size > arena->end)
-    {
-        return NULL;
-    }
-
-    void *ptr = arena->now;
-    arena->now += size;
-
-    return ptr;
+  arena->memory = pool;
+  arena->end = arena->memory + size;
+  arena->now = arena->memory;
 }
+
+inline void* arena_alloc(arena_t *arena, size_t size)
+{
+  if (arena->now + size >= arena->end)
+  {
+    return NULL;
+  }
+
+  const void* ptr = arena->now;
+  arena->now += size;
+
+  return ptr;
+}
+
+inline uint8_t arena_clear(arena_t *arena)
+{
+  arena->now = arena->memory;
+}
+
 
 struct any_sensor_s;
 typedef struct any_sensor_s any_sensor_t;
 
-typedef enum obtain_e
+typedef enum
 {
   OBTAIN_ERROR = 0,
   OBTAIN_TEMPERATURE = 1 << 0,
@@ -41,7 +54,7 @@ typedef enum obtain_e
 
   /* aliases */
   OBTAIN_TH = OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY,
-  OBTAIN_THP = OBTAIN_TH | OBTAIN_PRESSURE,
+  OBTAIN_TP = OBTAIN_TEMPERATURE | OBTAIN_PRESSURE,
 } obtain_t;
 
 struct any_sensor_s {
@@ -68,6 +81,7 @@ struct any_sensor_s {
 };
 
 typedef struct any_sensor_factory_s {
+  const uint8_t address;
   any_sensor_t* (*construct)(arena_t *arena);
   void (*destroy)(any_sensor_t *ctx, arena_t *arena);
 } any_sensor_factory_t;
@@ -79,9 +93,9 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 }
 
 #define SENSOR_INIT(PROBE, OBTAIN) {.sensor = NULL, .probe = PROBE, .obtain = OBTAIN }
-#define SENSOR_FACTORY(MODULE, C, D) \
-  static any_sensor_factory_t sensor_factory_##MODULE = {.\
-    construct = C, .destroy = D \
+#define SENSOR_FACTORY(MODULE, A, C, D) \
+  static any_sensor_factory_t sensor_factory_##MODULE = { \
+    .address = A, .construct = C, .destroy = D \
   }
 
 #define SENSOR_MODULE(MODULE, C, D, P, O) \

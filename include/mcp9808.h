@@ -53,6 +53,6 @@ static any_sensor_t *sensor_mcp9808_new(arena_t *arena)
     return &sensor_mcp9808;
 }
 
-SENSOR_FACTORY(MCP9808, sensor_mcp9808_new, NULL);
+SENSOR_FACTORY(MCP9808, MCP9808_ADDRESS_A2A1A0_000 >> 1, sensor_mcp9808_new, NULL);
 
 #endif

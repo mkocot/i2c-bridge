@@ -53,7 +53,7 @@ static any_sensor_t sensor_aht30 = SENSOR_INIT(
 );
 
 
-any_sensor_t *sensor_aht30_new(arena_t *arena)
+any_sensor_t *sensor_ahtxx_new(arena_t *arena)
 {
   if (sensor_aht30.sensor == NULL)
   {
@@ -64,6 +64,6 @@ any_sensor_t *sensor_aht30_new(arena_t *arena)
   return &sensor_aht30;
 }
 
-SENSOR_FACTORY(AHT30, sensor_aht30_new, NULL);
+SENSOR_FACTORY(AHTXX, AHTXX_ADDRESS, sensor_ahtxx_new, NULL);
 
 #endif

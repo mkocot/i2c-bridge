@@ -7,10 +7,10 @@
 #define FUNCONF_USE_DEBUGPRINTF     (1)
 
 // #define FUNCONF_USE_HSE 0 // external crystal on PA1 PA2
-#define FUNCONF_SYSTEM_CORE_CLOCK   (4000000)
-#define FUNCONF_USE_HSI             (1) // internal 24MHz clock oscillator
-#define FUNCONF_USE_PLL             (0) // use PLL x2
-#define FUNCONF_PLL_MULTIPLIER      (1) // required when PLL is disabled?
+// #define FUNCONF_SYSTEM_CORE_CLOCK   (4000000)
+// #define FUNCONF_USE_HSI             (1) // internal 24MHz clock oscillator
+#define FUNCONF_USE_PLL             (1) // use PLL x2
+// #define FUNCONF_PLL_MULTIPLIER      (1) // required when PLL is disabled?
 #define FUNCONF_INIT_ANALOG         (0) // no analog is required
 // #define FUNCONF_SYSTICK_USE_HCLK (1) // consider if this will have meaning
 

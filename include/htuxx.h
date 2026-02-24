@@ -8,7 +8,7 @@
 #include <driver_htu21d.h>
 #include <driver_htu31d.h>
 
-#define DRIVER_HTU21D_ADDRESS (0x80)
+#define DRIVER_HTU21D_ADDRESS (0x80 >> 1)
 #define DRIVER_HTU31D_ADDRESS (HTU31D_ADDR_PIN_LOW >> 1)
 
 static htu21d_handle_t htu21d;
@@ -29,8 +29,11 @@ static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
 
 static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
 {
-    i2c.addr = DRIVER_HTU31D_ADDRESS;
     htu31d.inited = 1;
+
+    // Temp: Q7.9 -64 ... ~64 (resolution: 0.001953125), bytes: 2
+    // P: (500 .. 1524), hPa (resolution: 4), bytes: 1
+    // H: 0..100 (resolution: 100/255%), bytes: 1
 
     if (htu31d_read_temperature_humidity(&htu31d, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
     {
@@ -79,8 +82,6 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
     ((void)ctx);
     uint8_t serial[3];
 
-    i2c.addr = DRIVER_HTU31D_ADDRESS;
-
     htu31d.inited = 0;
 
     DO_OR(htu31d_init(&htu31d));
@@ -124,6 +125,11 @@ static any_sensor_t* sensor_htu21d_new(arena_t *arena)
     return &sensor_htu21d;
 }
 
+static uint8_t sensor_htu21d_match(i2c_addr_t addr)
+{
+    return addr == DRIVER_HTU21D_ADDRESS;
+}
+
 static any_sensor_t* sensor_htu31d_new(arena_t *arena)
 {
     if (sensor_htu31d.sensor == NULL)
@@ -132,7 +138,7 @@ static any_sensor_t* sensor_htu31d_new(arena_t *arena)
         DRIVER_SET_DEFAULT_IIC_ADDR(HTU31D, &htu31d, htu31d_handle_t);
         DRIVER_HTU31D_LINK_DEBUG_PRINT(&htu31d, debug_print);
         /* not required, as i2c address is set per sensor */
-        htu31d_set_addr_pin(&htu31d, 0x40 << 1);//HTU31D_ADDR_PIN_LOW);
+        htu31d_set_addr_pin(&htu31d, DRIVER_HTU31D_ADDRESS << 1);
 
         sensor_htu31d.sensor = &htu31d;
     }
@@ -140,7 +146,12 @@ static any_sensor_t* sensor_htu31d_new(arena_t *arena)
     return &sensor_htu31d;
 }
 
-SENSOR_FACTORY(HTU21D, sensor_htu21d_new, NULL);
-SENSOR_FACTORY(HTU31D, sensor_htu31d_new, NULL);
+static uint8_t sensor_htu31d_match(i2c_addr_t addr)
+{
+    return addr == DRIVER_HTU31D_ADDRESS;
+}
+
+SENSOR_FACTORY(HTU21D, DRIVER_HTU21D_ADDRESS, sensor_htu21d_new, NULL);
+SENSOR_FACTORY(HTU31D, DRIVER_HTU31D_ADDRESS, sensor_htu31d_new, NULL);
 
 #endif

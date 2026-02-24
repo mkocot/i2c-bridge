@@ -1,7 +1,6 @@
 #ifndef I2C_BRIDGE_CONFIG_H
 #define I2C_BRIDGE_CONFIG_H
 
-#include <Arduino.h>
 #include <utility>
 
 #define WITH_SOFTWIRE 1

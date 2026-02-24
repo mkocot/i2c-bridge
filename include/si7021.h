@@ -6,6 +6,8 @@
 
 #include <driver_si7021.h>
 
+#define DRIVER_SI7021_ADDRESS 0x40
+
 static si7021_handle_t si7021;
 
 static uint8_t sensor_si7021_probe(any_sensor_t *ctx)
@@ -65,13 +67,6 @@ static obtain_t sensor_si7021_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
 
 static any_sensor_t sensor_si7021 = SENSOR_INIT(sensor_si7021_probe, sensor_si7021_obtain);
 
-static uint8_t libdriver_iic_addr_read_delay(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len, uint16_t ms)
-{
-    i2c.addr = addr >> 1;
-    i2c.regb = 1;
-    return i2c_read_reg_delay(&i2c, reg, buf, len, ms);
-}
-
 static any_sensor_t *sensor_si7021_new(arena_t *arena)
 {
     if (sensor_si7021.sensor == NULL)
@@ -86,6 +81,6 @@ static any_sensor_t *sensor_si7021_new(arena_t *arena)
     return &sensor_si7021;
 }
 
-SENSOR_FACTORY(SI7021, sensor_si7021_new, NULL);
+SENSOR_FACTORY(SI7021, DRIVER_SI7021_ADDRESS, sensor_si7021_new, NULL);
 
 #endif
