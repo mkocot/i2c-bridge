@@ -1,7 +1,9 @@
 #include "ahtxx.h"
+#include "bank.h"
 #include "bmp280.h"
 #include "common_driver.h"
 #include "hdc1080.h"
+#include "packet.h"
 #include "shtxx.h"
 #include "spi.h"
 #include "si7021.h"
@@ -11,31 +13,19 @@
 #include <alloca.h>
 #include <stdio.h>
 #include <ch32fun.h>
-#include <ch32x03xhw.h>
-#include <ch32v003_GPIO_branchless.h>
-#include <ch32v003_SPI.h>
 
 #include <lib_i2c.h>
 #include <driver_tca9548a.h>
 #include <driver_max31865.h>
 
-#if 0
-#include <driver_aht20.h>
-#include <driver_aht30.h>
-#include <driver_bmp280.h>
-#include <driver_sht35.h>
-#include <driver_sht4x.h>
-#include <driver_shtc3.h>
-#include <driver_si7021.h>
-#include <driver_hdc1080.h>
-#include <driver_htu21d.h>
-#include <driver_htu31d.h>
-#include <driver_mcp9808.h>
-#endif
-
 /* for debug */
 #include <driver_bme280.h>
 
+#if FUNCONF_USE_DEBUGPRINTF
+#define DPRINTF(FMT, ARGS...) printf((FMT), ## ARGS)
+#else
+#define DPRINTF(FMT, ARGS...) ((void)0)
+#endif
 
 /* get maximum bytes required per struct */
 #if 0
@@ -62,20 +52,6 @@ const int max_struct = MS(MS(MS(MS(MS(MS(MS(MS(MS(MS(SS(aht20_handle_t, aht30_ha
  * Reducing max usage to 4 * 120 + (48 (aht) + 56 (sht3x) + 48 (sht4x) + 56 (shtc3)) -> 688
 */
 
-typedef enum
-{
-  SENSOR_AHT = 1 << 0,
-  SENSOR_BMP280 = 1 << 1,
-  SENSOR_BME280 = 1 << 2,
-  SENSOR_SHT3X = 1 << 3,
-  SENSOR_SHT4X = 1 << 4,
-  SENSOR_SHTC3 = 1 << 5,
-  SENSOR_HTU21D = 1 << 6,
-  SENSOR_HTU31D = 1 << 7,
-  SENSOR_SI7021 = 1 << 8,
-  SENSOR_HDC1080 = 1 << 9,
-} sensor_t;
-
 typedef struct supported_sensor_e {
   sensor_t sensor;
   any_sensor_factory_t *factory;
@@ -92,114 +68,37 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_SHT4X, &sensor_factory_SHT4X},
   {SENSOR_SHTC3, &sensor_factory_SHTC3},
   {SENSOR_SI7021, &sensor_factory_SI7021},
+  {SENSOR_MCP9808, &sensor_factory_MCP9808},
 };
 
 #define supported_sensors_length (sizeof(supported_sensors) / sizeof(supported_sensors[0]))
 
-static uint8_t arena_pool[1024];
+static uint8_t packet_pool[sizeof(packet_t)];
+static uint8_t arena_pool[128];
 
-/* single SPI connected sensor*/
+static packet_t packet;
+
+/* 
+ * single SPI connected sensor
+ * just output "raw" reading and do convoluted conversion on received side
+ */
 static max31865_handle_t max31865;
+
 /* single I2C multiplexer */
 static tca9548a_handle_t tca9548a;
 // sht, dht, ...
 
+#define BANKS_COUNT (4)
 
-#if 0
-void SPISendBytes(uint8_t *sendData, uint32_t length)
-{
-  uint32_t loop = 0;
-  uint8_t tmp = 0;
-  for (loop = 0; loop < length; loop++)
-  {
-    // Send SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
-      ; // wait while flag is zero or TX buffer not empty
-    SPI_I2S_SendData(SPI1, sendData[loop]);
-
-    // Receive SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
-      ; // wait while flag is zero or RX buffer is empty
-    tmp = SPI_I2S_ReceiveData(SPI1);
-  }
-}
-
-void SPIReceiveBytes(uint8_t *getData, uint32_t length)
-{
-  uint32_t loop = 0;
-  for (loop = 0; loop < length; loop++)
-  {
-    // Send SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
-      ; // wait while flag is zero or TX buffer not empty
-    SPI_I2S_SendData(SPI1, 0x00);
-
-    // Receive SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
-      ; // wait while flag is zero or RX buffer is empty
-    getData[loop] = SPI_I2S_ReceiveData(SPI1);
-  }
-}
-void SPISendReceiveBytes(uint8_t *sendData, uint8_t *getData, uint32_t length)
-{
-  uint32_t loop = 0;
-  for (loop = 0; loop < length; loop++)
-  {
-    // Send SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
-      ; // wait while flag is zero or TX buffer not empty
-    SPI_I2S_SendData(SPI1, sendData[loop]);
-
-    // Receive SPI Byte
-    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
-      ; // wait while flag is zero or RX buffer is empty
-    getData[loop] = SPI_I2S_ReceiveData(SPI1);
-  }
-}
-#endif
-
+bank_t banks[BANKS_COUNT] = {
+    {TCA9548A_CHANNEL_5, {{0, NULL}, {0, NULL}}},
+    {TCA9548A_CHANNEL_4, {{0, NULL}, {0, NULL}}},
+    {TCA9548A_CHANNEL_3, {{0, NULL}, {0, NULL}}},
+    {TCA9548A_CHANNEL_2, {{0, NULL}, {0, NULL}}},
+};
 
 static void loop();
 
-
-uint8_t spi_send_receive(const uint8_t *data, const uint8_t data_len, uint8_t *recv, const uint8_t recv_len)
-{
-    // spi_send8(0xD0);
-
-    // // wait for data?
-    // printf("Wait for data receive\n");
-    // while (!(SPI1->STATR & SPI_STATR_RXNE))
-    // {
-    //   __NOP();
-    // }
-    // // Delay_Ms(200);
-    // printf("X: %X\n", SPI1->DATAR);
-
-    // // Send dommy data and wait for response of 1 byte
-    // spi_send8(0x00);
-    // printf("Wait for data receive (real)\n");
-    // while (!(SPI1->STATR & SPI_STATR_RXNE))
-    // {
-    //   __NOP();
-    // }
-    // // Delay_Ms(200);
-    // printf("R: %X\n", SPI1->DATAR);
-
-  spi_send8(data[0]);
-  // printf("1: %X\n", SPI1->DATAR);
-
-    // while (!(SPI1->STATR & SPI_STATR_RXNE))
-    // {
-    //   __NOP();
-    // }
-    // WARNING: You have to read data or it will read correct value
-    // after 2nd send_receive invocation
-  // printf("2: %X\n", SPI1->DATAR);
-
-  recv[0] = spi_recv8(0x00);
-
-  return 0;
-}
 
 void spi_fun(void)
 {
@@ -442,13 +341,13 @@ static inline uint8_t tca9458a_iic_setup()
 static inline uint8_t tca9548a_iic_write(uint8_t *buf, uint16_t len)
 {
   uint8_t err;
-  if (err = tca9458a_iic_setup())
+  if ((err = tca9458a_iic_setup()))
   {
     printf("iic_setup: fialed: %d\n", err);
     return 1;
   }
 
-  if (err = i2c_write_raw(&i2c, buf, len))
+  if ((err = i2c_write_raw(&i2c, buf, len)))
   {
     printf("iic_write_raw: fialed: %d\n", err);
   }
@@ -458,13 +357,13 @@ static inline uint8_t tca9548a_iic_write(uint8_t *buf, uint16_t len)
 static inline uint8_t tca9548a_iic_read(uint8_t *buf, uint16_t len)
 {
   uint8_t err;
-  if (err = tca9458a_iic_setup())
+  if ((err = tca9458a_iic_setup()))
   {
     printf("iic_setup: fialed: %d\n", err);
     return 1;
   }
 
-  if (err = i2c_read_raw(&i2c, buf, len))
+  if ((err = i2c_read_raw(&i2c, buf, len)))
   {
     printf("iic_read_raw: fialed: %d\n", err);
   }
@@ -484,22 +383,6 @@ void i2c_scan_callback(const uint8_t addr)
 {
   printf("Address: 0x%02X Responded.\n", addr);
 }
-
-struct bank_t
-{
-  tca9548a_channel_t channel;
-  // If sensor is present then it was inited before, otherwise initialization
-  // is required before acquiring any data
-  sensor_t sensors;
-  arena_t arena;
-};
-
-struct bank_t banks[4] = {
-    {TCA9548A_CHANNEL_5, 0},
-    {TCA9548A_CHANNEL_4, 0},
-    {TCA9548A_CHANNEL_3, 0},
-    {TCA9548A_CHANNEL_2, 0},
-};
 
 struct xxx_t
 {
@@ -575,91 +458,86 @@ static supported_sensor_t *find_sensor(sensor_t type)
   return NULL;
 }
 
-static uint8_t bank_check_new(struct bank_t *bank)
+static uint8_t bank_check_new(bank_t *bank)
 {
-  printf("Check bank: %d\n", bank->channel);
+  DPRINTF("Check bank: %d\n", bank->channel);
 
   if (tca9548a_channel_set(&tca9548a, bank->channel))
   {
-    printf("channel failed");
+    DPRINTF("channel failed");
     return 1;
   }
 
-  if ((bank->sensors & (SENSOR_BMP280 | SENSOR_AHT)) == (SENSOR_BMP280 | SENSOR_AHT))
+  sensor_t sensors = bank_active_sensors(bank);
+
+  if ((sensors & (SENSOR_BMP280 | SENSOR_AHT)) == (SENSOR_BMP280 | SENSOR_AHT))
   {
     /* bank has bmp280 and aht nothing more to check*/
+    DPRINTF("Both AHTxx and BMP280 already detected\n");
+
     return 0;
   }
 
   uint8_t addr = 0;
   uint8_t response = 0;
+  uint8_t sensor_id = 0;
 
-  if (bank->sensors & SENSOR_BMP280)
+  sensor_t sensors_to_check = ~0; /* check everything */
+
+  if (sensors & SENSOR_BMP280)
   {
-    if (i2c_ping(sensor_factory_AHTXX.address) != I2C_OK)
-    {
-      /* no companion */
-      return 0;
-    }
-
-    supported_sensor_t *supported = find_sensor(SENSOR_AHT);
-    if (supported == NULL)
-    {
-      return 1;
-    }
-
-    if (sensor_check(supported, &addr, &response, &bank->arena))
-    {
-      return 1;
-    }
-
-    bank->sensors |= supported->sensor;
-
-    return 0;
+    DPRINTF("Has BMP280, check for AHTxx\n");
+    sensor_id = 1;
+    /* check for companion */
+    sensors_to_check = SENSOR_AHT;
   }
-  else if (bank->sensors & SENSOR_AHT)
+  else if (sensors & SENSOR_AHT)
   {
+    DPRINTF("Has AHTxx, check for BMP280\n");
+    sensor_id = 1;
     /* has bmp280 or aht check for possible companion */
-    if (i2c_ping(sensor_factory_BMP280.address) != I2C_OK)
-    {
-      /* no companion */
-      return 0;
-    }
-
-    supported_sensor_t *supported = find_sensor(SENSOR_BMP280);
-    if (supported == NULL)
-    {
-      return 1;
-    }
-
-    if (sensor_check(supported, &addr, &response, &bank->arena))
-    {
-      return 1;
-    }
-
-    bank->sensors |= supported->sensor;
-
-    return 0;
+    sensors_to_check = SENSOR_BMP280;
   } 
-  else if (bank->sensors)
+  else if (sensors)
   {
+    DPRINTF("Bank already has detected sensor\n");
     /* if bank has any other sensor then nothing else to check */
     return 0;
   }
 
+
   for (int i = 0; i < supported_sensors_length; ++i)
   {
     supported_sensor_t *supported_sensor = &supported_sensors[i];
-    if (sensor_check(supported_sensor, &addr, &response, &bank->arena))
+
+    if ((supported_sensor->sensor & sensors_to_check) == 0)
     {
+      DPRINTF("skip sensor\n");
+      /* sensor is not allowed to check, skip */
       continue;
     }
 
-    bank->sensors |= supported_sensor->sensor;
+    if (sensor_check(supported_sensor, &addr, &response, &bank->arena))
+    {
+      DPRINTF("not detected\n");
+      /* sensor is not detected */
+      continue;
+    }
+
+    bank->sensors[sensor_id].type = supported_sensor->sensor;
+    bank->sensors[sensor_id++].sensor = supported_sensor->factory->construct(&bank->arena);
+
+    if (sensor_id >= BANK_MAX_SENSORS)
+    {
+      DPRINTF("WARNING: Too much sensors on bank\n");
+      /* WARNING: Too much sensor on given bank */
+      return 1;
+    }
   }
 
   return 0;
 }
+
 
 /* MUX configuration is out of this scope */
 
@@ -806,6 +684,7 @@ static void dma_uart_setup(void)
 	NVIC_EnableIRQ(DMA1_Channel4_IRQn);
 }
 
+#if 0
 static void dma_uart_tx(const void *data, uint32_t len)
 {
 	// Disable DMA channel (just in case a transfer is pending)
@@ -831,6 +710,7 @@ void asdf() {
 	}
 
 }
+#endif
 
 #define CALCULATED_HPRE_DIV ((((HSI_VALUE) / (FUNCONF_SYSTEM_CORE_CLOCK)) - 1) << 4)
 
@@ -923,7 +803,7 @@ int main()
   // uart_fun();
   // asdf();
 
-  spi_fun();
+  // spi_fun();
 
 
   initializeGPIO();
@@ -979,37 +859,40 @@ int main()
   uint16_t h;
 
   int probed = 0;
-  // any_sensor_t* sensor = sensor_factory_HDC1080.construct(NULL);
-  any_sensor_t* sensor = sensor_factory_HTU31D.construct(NULL);
+  for (int i = 0; i < supported_sensors_length; ++i) {
+    any_sensor_t* sensor = supported_sensors[i].factory->construct(NULL);
 
-  while(1)
-  {
-    if (probed == 0 && sensor->probe(sensor))
+    while(1)
     {
-       printf("probe failed\n");
-    }
-    else
-    {
-      if (probed == 0) {
-        printf("probe OK\n");
-      }
-
-      probed = 1;
-
-      if (sensor->obtain(sensor, &t, &p, &h) == OBTAIN_ERROR)
+      if (probed == 0 && sensor->probe(sensor))
       {
-        printf("obtain failed\n");
-        probed = 0;
+        printf("probe failed\n");
       }
       else
       {
-        printf("obtain OK\n");
+        if (probed == 0) {
+          printf("probe OK\n");
+        }
+
+        probed = 1;
+
+        if (sensor->obtain(sensor, &t, &p, &h) == OBTAIN_ERROR)
+        {
+          printf("obtain failed: %ld %d %d\n", t, p, h);
+          probed = 0;
+        }
+        else
+        {
+          printf("obtain OK\n");
+          break;
+        }
       }
+      Delay_Ms(2000);
     }
-    Delay_Ms(2000);
+
+    supported_sensors[i].factory->destroy(sensor, NULL);
   }
 
-  sensor_factory_MCP9808.destroy(sensor, NULL);
 
   while (1)
   {
@@ -1076,26 +959,100 @@ int main()
   return 1;
 }
 
-void loop()
+static void bank_fetch(bank_t *bank)
 {
+  bank_check_new(bank);
 
-  // full precision first read and then diff for rest?
-  
-  printf("LOOP\n");
-  for (unsigned b = 0; b < sizeof(banks)/sizeof(banks[0]); ++b)
+  int32_t temp;
+  uint16_t pres;
+  uint16_t hum;
+
+  int bank_id;
+  for (int i = 0; i < BANKS_COUNT; ++i)
   {
-    bank_check_new(&banks[b]);
-
-    arena_pool[b] = banks[b].sensors;
-    printf("Set bank: %d@%d\n", b, banks[b].channel);
-    if (tca9548a_channel_set(&tca9548a, banks[b].channel))
+    if (&banks[i] == bank)
     {
-      printf("failed to enable channel: %d\n", banks[b].channel);
-      continue;
+      bank_id = i;
+      break;
+    }
+  }
+
+  if (bank_active_count(bank) == 0)
+  {
+    return;
+  }
+
+  uint8_t active = 0;
+  for (int i = 0; i < BANK_MAX_SENSORS; i++)
+  {
+    active_sensor_t *sensor = &bank->sensors[i];
+    if (sensor->type == 0)
+    {
+      break;
     }
 
-    i2c_scan(i2c_scan_callback);
+    // fetch data and put to storage
+    obtain_t result = sensor->sensor->obtain(sensor->sensor, &temp, &pres, &hum);
+    if (result == OBTAIN_ERROR)
+    {
+      find_sensor(sensor->type)->factory->destroy(sensor->sensor, &bank->arena);
+
+      sensor->type = SENSOR_NONE;
+      sensor->sensor = NULL;
+    }
+
+    if (result & OBTAIN_HUMIDITY)
+    {
+      packet_put_reading(&packet, 0, i, OBTAIN_HUMIDITY, hum);
+    }
+
+    if (result & OBTAIN_PRESSURE)
+    {
+      packet_put_reading(&packet, 0, i, OBTAIN_PRESSURE, pres);
+    }
+
+    if (result & OBTAIN_TEMPERATURE)
+    {
+      packet_put_reading(&packet, 0, i, OBTAIN_TEMPERATURE, temp);
+    }
+
+    ++active;
   }
+
+  if (active == 0)
+  {
+    arena_clear(&bank->arena);
+  }
+}
+
+void loop()
+{
+  printf("LOOP\n");
+  packet_clear_readings(&packet);
+
+  if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
+  {
+    packet_put_reading(&packet, PACKET_BANK_PT100, 0, OBTAIN_TEMPERATURE, tmp_raw_humidity16);
+  }
+
+  for (int b = 0; b < BANKS_COUNT; ++b)
+  {
+    bank_fetch(&banks[b]);
+  }
+  // for (unsigned b = 0; b < sizeof(banks)/sizeof(banks[0]); ++b)
+  // {
+  //   bank_check_new(&banks[b]);
+
+  //   arena_pool[b] = banks[b].sensors;
+  //   printf("Set bank: %d@%d\n", b, banks[b].channel);
+  //   if (tca9548a_channel_set(&tca9548a, banks[b].channel))
+  //   {
+  //     printf("failed to enable channel: %d\n", banks[b].channel);
+  //     continue;
+  //   }
+
+  //   i2c_scan(i2c_scan_callback);
+  // }
 
   // tca9548a_reset(&tca9548a);
   Delay_Ms(2000);
