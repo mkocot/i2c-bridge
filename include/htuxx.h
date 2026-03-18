@@ -8,21 +8,62 @@
 #include <driver_htu21d.h>
 #include <driver_htu31d.h>
 
+#include <fptc.h>
+
 #define DRIVER_HTU21D_ADDRESS (0x80 >> 1)
 #define DRIVER_HTU31D_ADDRESS (HTU31D_ADDR_PIN_LOW >> 1)
 
 static htu21d_handle_t htu21d;
 static htu31d_handle_t htu31d;
 
+static inline fpt htu31d_t_fpt(uint16_t val) {
+    #if 1
+    // 0.010492 0.000332
+    fpt as_fpt = val;
+    // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 15));
+    // +166 is magic adjustement
+    as_fpt = fpt_mul(as_fpt, i2fpt(165) + 166);
+    #else
+    fpt as_fpt = i2fpt(val);
+    // 0.079309 0.002472
+    as_fpt = fpt_div(as_fpt, i2fpt(65535));
+    as_fpt = fpt_mul(as_fpt, i2fpt(165));
+    #endif
+
+    as_fpt = fpt_sub(as_fpt, i2fpt(40));
+
+    return as_fpt;
+}
+
+static inline fpt htu21d_t_fpt(uint16_t val) {
+    fpt as_fpt = val;
+    // +1 reduces maximum error from 0.000031 to 0.000023
+    as_fpt = fpt_mul(as_fpt, fl2fpt(175.72f) + 1);
+    as_fpt = fpt_sub(as_fpt, fl2fpt(46.85f));
+
+    return as_fpt;
+}
+
+static inline float htu21d_h_fpt(uint16_t val) {
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, i2fpt(125));
+    as_fpt = fpt_sub(as_fpt, i2fpt(6));
+
+    return as_fpt;
+}
+
 static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
 {
     i2c.addr = DRIVER_HTU21D_ADDRESS;
     htu21d.inited = 1;
 
-    if (htu21d_read_temperature_humidity(&htu21d, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+    if (htu21d_read_temperature_humidity(&htu21d, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
     {
         return OBTAIN_ERROR;
     }
+
+    *t = QUANTIZE_TEMP(htu21d_t_fpt(tmp_temperature));
+    *h = QUANTIZE_HUM(htu21d_h_fpt(tmp_humidity_f));
 
     return OBTAIN_TH;
 }
@@ -35,14 +76,22 @@ static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
     // P: (500 .. 1524), hPa (resolution: 4), bytes: 1
     // H: 0..100 (resolution: 100/255%), bytes: 1
 
-    if (htu31d_read_temperature_humidity(&htu31d, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+    if (htu31d_read_temperature_humidity(&htu31d, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
     {
         return OBTAIN_ERROR;
     }
 
-    int full_degrees = (int)tmp_temperature;
-    int decimals = ((int)(tmp_temperature * 100)) & 100;
-    printf("T: %d.%d\n", full_degrees, decimals);
+    // *t = QUANTIZE_TEMP(tmp_raw_temperature16);
+    // *h = QUANTIZE_HUM(tmp_raw_humidity16);
+    *t = QUANTIZE_TEMP(htu31d_t_fpt(tmp_raw_humidity16));
+    *h = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+
+    // *t = QUANTIZE_TEMP(tmp_temperature);
+    // *h = QUANTIZE_HUM(tmp_humidity_f);
+
+    // int full_degrees = (int)tmp_temperature;
+    // int decimals = ((int)(tmp_temperature * 100)) & 100;
+    // printf("T: %d.%d\n", full_degrees, decimals);
     return OBTAIN_TH;
 }
 
@@ -95,7 +144,7 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
     /* Connection check */
     DO_OR(htu31d_get_serial_number(&htu31d, serial));
 
-    printf("SERIAL: %x%x%x\n", serial[0], serial[1], serial[2]);
+    // printf("SERIAL: %x%x%x\n", serial[0], serial[1], serial[2]);
 
     // All "0" is invalid
     return !(serial[0] != 0 && serial[1] != 0 && serial[2] != 0);
@@ -125,11 +174,6 @@ static any_sensor_t* sensor_htu21d_new(arena_t *arena)
     return &sensor_htu21d;
 }
 
-static uint8_t sensor_htu21d_match(i2c_addr_t addr)
-{
-    return addr == DRIVER_HTU21D_ADDRESS;
-}
-
 static any_sensor_t* sensor_htu31d_new(arena_t *arena)
 {
     if (sensor_htu31d.sensor == NULL)
@@ -144,11 +188,6 @@ static any_sensor_t* sensor_htu31d_new(arena_t *arena)
     }
 
     return &sensor_htu31d;
-}
-
-static uint8_t sensor_htu31d_match(i2c_addr_t addr)
-{
-    return addr == DRIVER_HTU31D_ADDRESS;
 }
 
 SENSOR_FACTORY(HTU21D, DRIVER_HTU21D_ADDRESS, sensor_htu21d_new, NULL);

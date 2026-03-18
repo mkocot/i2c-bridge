@@ -6,6 +6,23 @@
 
 #include <driver_si7021.h>
 
+static inline float si7021_h_fpt(uint16_t val) {
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, i2fpt(125));
+    as_fpt = fpt_sub(as_fpt, i2fpt(6));
+
+    return as_fpt;
+}
+
+static inline fpt si7021_t_fpt(uint16_t val) {
+    fpt as_fpt = val;
+    // +1 reduces maximum error from 0.000031 to 0.000023
+    as_fpt = fpt_mul(as_fpt, fl2fpt(175.72f) + 1);
+    as_fpt = fpt_sub(as_fpt, fl2fpt(46.85f));
+
+    return as_fpt;
+}
+
 #define DRIVER_SI7021_ADDRESS 0x40
 
 static si7021_handle_t si7021;
@@ -36,11 +53,11 @@ static uint8_t sensor_si7021_probe(any_sensor_t *ctx)
 
     if (zeros == sizeof(serial) / sizeof(serial[0]))
     {
-        printf("???\n");
+        // printf("???\n");
         return 1;
     }
 
-    printf("Serial: %x%x%x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5], serial[6], serial[7]);
+    // printf("Serial: %x%x%x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5], serial[6], serial[7]);
 
     DO_OR(si7021_set_heater(&si7021, SI7021_BOOL_FALSE));
     DO_OR(si7021_set_mode(&si7021, SI7021_MODE_NO_HOLD_MASTER));
@@ -54,13 +71,13 @@ static obtain_t sensor_si7021_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
 {
     si7021.inited = 1;
 
-    if (si7021_read(&si7021, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+    if (si7021_read(&si7021, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
     {
         return OBTAIN_ERROR;
     }
 
-    printf("T: %d, H: %d\n", (int)tmp_temperature, (int)tmp_humidity_f);
-
+    *t = QUANTIZE_TEMP(si7021_t_fpt(tmp_raw_temperature16));
+    *h = QUANTIZE_HUM(si7021_h_fpt(tmp_raw_humidity16));
 
     return OBTAIN_TH;
 }

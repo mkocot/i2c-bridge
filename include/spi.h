@@ -2,6 +2,18 @@
 #define W_SPI_H
 
 #include <ch32fun.h>
+
+#ifndef CH32V003
+#include <ch32x00xhw.h>
+#define TIM_ARPE    TIM1_CTLR1_ARPE
+#define ADC_RSTCAL  CTLR2_RSTCAL_Set
+#define ADC_CAL     ADC_AWDCH_2
+#define TIM_CEN     TIM1_CTLR1_CEN
+#define TIM_UG      TIM1_SWEVGR_UG
+#define TIM_MOE     TIM1_BDTR_MOE
+#define TIME_CEN    TIM1_CTLR1_CEN
+#endif
+
 #include <ch32v003_GPIO_branchless.h>
 #include <stdio.h>
 
@@ -186,7 +198,7 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
     return SPI_INIT_ERR_FRAME_SIZE;
   }
 
-  if (cfg->nss_pin >= PC5 && cfg->nss_pin <= PC7 || cfg->nss_pin == 0)
+  if ((cfg->nss_pin >= PC5 && cfg->nss_pin <= PC7) || cfg->nss_pin == 0)
   {
     /* not allowed to be any of HW SPI pins */
     return SPI_INIT_ERR_NSS_PIN;
@@ -348,5 +360,98 @@ spi_err_t spi_end_transaction(spi_device_t *handle)
 #undef SPI_WAIT_FOR_RX_AVAILABLE
 #undef SPI_WAIT_TRANSFER_COMPLETE
 #undef SPI_INITIALIZED
+
+#if 0
+void SPISendBytes(uint8_t *sendData, uint32_t length)
+{
+  uint32_t loop = 0;
+  uint8_t tmp = 0;
+  for (loop = 0; loop < length; loop++)
+  {
+    // Send SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
+      ; // wait while flag is zero or TX buffer not empty
+    SPI_I2S_SendData(SPI1, sendData[loop]);
+
+    // Receive SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
+      ; // wait while flag is zero or RX buffer is empty
+    tmp = SPI_I2S_ReceiveData(SPI1);
+  }
+}
+
+void SPIReceiveBytes(uint8_t *getData, uint32_t length)
+{
+  uint32_t loop = 0;
+  for (loop = 0; loop < length; loop++)
+  {
+    // Send SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
+      ; // wait while flag is zero or TX buffer not empty
+    SPI_I2S_SendData(SPI1, 0x00);
+
+    // Receive SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
+      ; // wait while flag is zero or RX buffer is empty
+    getData[loop] = SPI_I2S_ReceiveData(SPI1);
+  }
+}
+void SPISendReceiveBytes(uint8_t *sendData, uint8_t *getData, uint32_t length)
+{
+  uint32_t loop = 0;
+  for (loop = 0; loop < length; loop++)
+  {
+    // Send SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == RESET)
+      ; // wait while flag is zero or TX buffer not empty
+    SPI_I2S_SendData(SPI1, sendData[loop]);
+
+    // Receive SPI Byte
+    while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET)
+      ; // wait while flag is zero or RX buffer is empty
+    getData[loop] = SPI_I2S_ReceiveData(SPI1);
+  }
+}
+#endif
+
+static uint8_t spi_send_receive(const uint8_t *data, const uint8_t data_len, uint8_t *recv, const uint8_t recv_len)
+{
+    // spi_send8(0xD0);
+
+    // // wait for data?
+    // printf("Wait for data receive\n");
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // // Delay_Ms(200);
+    // printf("X: %X\n", SPI1->DATAR);
+
+    // // Send dommy data and wait for response of 1 byte
+    // spi_send8(0x00);
+    // printf("Wait for data receive (real)\n");
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // // Delay_Ms(200);
+    // printf("R: %X\n", SPI1->DATAR);
+
+  spi_send8(data[0]);
+  // printf("1: %X\n", SPI1->DATAR);
+
+    // while (!(SPI1->STATR & SPI_STATR_RXNE))
+    // {
+    //   __NOP();
+    // }
+    // WARNING: You have to read data or it will read correct value
+    // after 2nd send_receive invocation
+  // printf("2: %X\n", SPI1->DATAR);
+
+  recv[0] = spi_recv8(0x00);
+
+  return 0;
+}
+
 
 #endif

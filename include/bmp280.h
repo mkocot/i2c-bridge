@@ -41,7 +41,7 @@ static uint8_t sensor_bmp280_probe(any_sensor_t *ctx)
 
   if (bmp280_set_pressure_oversampling(bmp280, BMP280_OVERSAMPLING_x1))
   {
-    printf("F3\n");
+    // printf("F3\n");
     return 4;
   }
 
@@ -49,7 +49,7 @@ static uint8_t sensor_bmp280_probe(any_sensor_t *ctx)
 
   if (bmp280_set_temperatue_oversampling(bmp280, BMP280_OVERSAMPLING_x1))
   {
-    printf("F4\n");
+    // printf("F4\n");
     return 5;
   }
 
@@ -70,6 +70,10 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, int32_t *out_t, uint16_t
   {
     return OBTAIN_ERROR;
   }
+#if 1
+  *out_t = QUANTIZE_TEMP(t);
+  *out_p = QUANTIZE_PRESSURE(p);
+  #endif
 
   return OBTAIN_TP;
 }
@@ -78,7 +82,7 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, int32_t *out_t, uint16_t
 static inline any_sensor_t *sensor_factory_bmp280_new(arena_t *arena)
 {
   // TODO: allocate!!
-  any_sensor_t *sensor_bmp280 = (any_sensor_t*)arena_obtain(arena, sizeof(any_sensor_t));
+  any_sensor_t *sensor_bmp280 = (any_sensor_t*)arena_alloc(arena, sizeof(any_sensor_t));
   if (sensor_bmp280 == NULL)
   {
     return NULL;
@@ -88,7 +92,7 @@ static inline any_sensor_t *sensor_factory_bmp280_new(arena_t *arena)
   sensor_bmp280->probe = sensor_bmp280_probe;
 
 
-  bmp280_handle_t *bmp280 = (bmp280_handle_t*)arena_obtain(arena, sizeof(bmp280_handle_t));
+  bmp280_handle_t *bmp280 = (bmp280_handle_t*)arena_alloc(arena, sizeof(bmp280_handle_t));
   if (bmp280 == NULL)
   {
     return NULL;

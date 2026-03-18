@@ -6,6 +6,7 @@
 #include <lib_i2c.h>
 #include <ch32fun.h>
 #include "spi.h"
+#include <fptc.h>
 
 static i2c_device_t i2c = {
     .clkr = I2C_CLK_400KHZ, /* "default" */
@@ -105,7 +106,7 @@ static inline uint8_t libdriver_nop_void(void) { return 0; }
   DRIVER_## DRIVER ##_LINK_IIC_READ_ADDRESS16((HANDLE), libdriver_iic_addr16_read); \
   DRIVER_## DRIVER ##_LINK_IIC_WRITE_ADDRESS16((HANDLE), libdriver_iic_addr16_write)
 
-inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
-inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
+static inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
+static inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
 
 #endif

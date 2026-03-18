@@ -3,6 +3,7 @@
 
 #include <memory.h>
 #include <stdint.h>
+#include <fptc.h>
 
 // union any_sensor_u {
 //   aht30_handle_t aht;
@@ -12,33 +13,45 @@
 typedef struct arena_s arena_t;
 struct arena_s {
     const void *memory;
-    void *end;
+    const void *end;
     void *now;
 };
 
-inline uint8_t arena_init(arena_t *arena, void *pool, size_t size)
+
+inline static uint8_t arena_init(arena_t *arena, void *pool, size_t size);
+
+inline static void* arena_alloc(arena_t *arena, size_t size);
+
+inline static uint8_t arena_clear(arena_t *arena);
+
+
+uint8_t arena_init(arena_t *arena, void *pool, size_t size)
 {
   arena->memory = pool;
-  arena->end = arena->memory + size;
-  arena->now = arena->memory;
+  arena->end = pool + size;
+  arena->now = pool;
+
+  return 0;
 }
 
-inline void* arena_alloc(arena_t *arena, size_t size)
+void* arena_alloc(arena_t *arena, size_t size)
 {
   if (arena->now + size >= arena->end)
   {
     return NULL;
   }
 
-  const void* ptr = arena->now;
+  void* ptr = arena->now;
   arena->now += size;
 
   return ptr;
 }
 
-inline uint8_t arena_clear(arena_t *arena)
+uint8_t arena_clear(arena_t *arena)
 {
-  arena->now = arena->memory;
+  arena->now = (void*) arena->memory;
+
+  return 0;
 }
 
 
@@ -115,5 +128,144 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
     MODULE.inited = init_state; \
     return err; \
   }
+
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
+#define MAX(A, B) ((A) > (B) ? (A) : (B))
+#define MINMAX(A, B, C) \
+    ((C) < (A) ? (A) : (C) > (B) ? (B) : (C))
+
+#if !defined(FPT_WBITS) || FPT_WBITS != 16
+#error FPT_WBITS should be defined to 16 bits!
+#endif
+
+#define Q_RANGE(FROM, TO) ((TO) - (FROM) + 1)
+
+#define T_MIN -40
+#define T_MAX 85
+#define TQ_MIN i2fpt(T_MIN)
+#define TQ_MAX i2fpt(T_MAX)
+
+#define P_MIN 300
+#define P_MAX 110000
+#define PQ_MIN i2fpt(P_MIN)
+#define PQ_MAX i2fpt(P_MAX)
+
+#define H_MIN 0
+#define H_MAX 100
+#define HQ_MIN i2fpt(H_MIN)
+#define HQ_MAX i2fpt(H_MAX)
+
+
+#define QUANTIZE_Q(FROM, TO, BYTES, STORAGE, VALUE) \
+  (STORAGE)fpt_div( \
+    fpt_sub(MINMAX(FROM, TO, VALUE), FROM), \
+    Q_RANGE(FROM, TO) \
+  )
+
+// static uint16_t quant(fpt val) {
+//     if (val < Q_MIN) {
+//         val = Q_MIN;
+//     } else if (val > Q_MAX) {
+//         val = Q_MAX;
+//     }
+
+//     val = fpt_sub(val, Q_MIN);
+//     val = fpt_div(val, Q_RANGE);
+
+//     return val;
+// }
+
+#define DEQUANTIZE_Q(FROM, TO, BYTES, VALUE) \
+  fpt_add(fpt_mul((VALUE), Q_RANGE(FROM, TO)), FROM)
+// static float dequant(uint16_t val) {
+//     fpt as_fpt = val;
+//     as_fpt = fpt_mul(as_fpt, Q_RANGE);
+//     as_fpt = fpt_add(as_fpt, Q_MIN);
+
+//     return fpt2fl(as_fpt);
+// }
+
+/* 24bits: -40 .. 85 */
+#define QUANTIZE_TEMP(V) \
+  QUANTIZE_Q(TQ_MIN, TQ_MAX, 3, int32_t, V)
+
+/* 16bits: 300 .. 110000*/
+#define QUANTIZE_PRESSURE(V) \
+  QUANTIZE_Q(PQ_MIN, PQ_MAX, 2, uint16_t, V)
+
+
+#define DEQUANTIZE_TEMP(V) \
+  DEQUANTIZE_Q(T_MIN, T_MAX, 3, V)
+
+#define DEQUANTIZE_PRESSURE(V) \
+  DEQUANTIZE_Q(P_MIN, P_MAX, 2, V)
+
+/* convert raw 16bit (range: 0..100) humidity value to FPT */
+static inline fpt raw_hum_to_fpt(uint16_t hum)
+{
+  return fpt_mul(hum, i2fpt(100));
+}
+
+static inline int32_t convert_temp(float t)
+{
+  return QUANTIZE_TEMP(t);
+}
+
+static inline uint16_t convert_pressure(float p)
+{
+  return QUANTIZE_PRESSURE(p);
+}
+
+// static inline uint8_t convert_hum(float p)
+// {
+//   return QUANTIZE_HUM(p);
+// }
+
+static inline float decode_temp(int32_t t)
+{
+  return DEQUANTIZE_TEMP(t);
+}
+
+static inline float decode_pressure(uint16_t p)
+{
+  return DEQUANTIZE_PRESSURE(p);
+}
+
+
+static inline uint8_t quant_h(fpt val) {
+    if (val < HQ_MIN) {
+        val = HQ_MIN;
+    } else if (val > HQ_MAX) {
+        val = HQ_MAX;
+    }
+
+    val = fpt_div(val, HQ_MAX);
+    /* 
+     * dunno why but improves maximum difference from 0.39 to 0.19
+     */
+    val += val & 0xFF;
+    val >>= 8;
+
+
+    return val;
+}
+
+/* 8bits: 0 .. 100*/
+#define QUANTIZE_HUM(V) \
+  quant_h(V)
+//   QUANTIZE_Q(HQ_MIN, HQ_MAX, 1, uint8_t, V)
+
+static inline float dequant_h(uint8_t val) {
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, HQ_MAX);
+    as_fpt <<= 8;
+
+
+    return fpt2fl(as_fpt);
+}
+
+#define DEQUANTIZE_HUM(V) \
+  dequant_h(V)
+//   DEQUANTIZE_Q(H_MIN, H_MAX, 1, V)
 
 #endif

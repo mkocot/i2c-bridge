@@ -7,6 +7,32 @@
 #include <driver_shtc3.h>
 #include <driver_sht4x.h>
 
+#include <fptc.h>
+
+static inline fpt shtxx_t_fpt(uint16_t val) {
+    #if 1
+    fpt as_fpt = val;
+    // 0.030727 0.001053
+    // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 5));
+    // NOTE(m): Why using +176 improves accuracy?
+    as_fpt = fpt_mul(as_fpt, i2fpt(175) + 176);
+    #else
+    // 0.084133 0.002625
+    as_fpt = fpt_div(as_fpt, i2fpt(65535));
+    as_fpt = fpt_mul(as_fpt, i2fpt(175));
+    #endif
+    as_fpt = fpt_sub(as_fpt, i2fpt(45));
+
+    return as_fpt;
+}
+
+static inline float sht4x_h_fpt(uint16_t val) {
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, i2fpt(125));
+    as_fpt = fpt_sub(as_fpt, i2fpt(6));
+
+    return as_fpt;
+}
 
 static sht35_handle_t sht35;
 static sht4x_handle_t sht4x;
@@ -43,7 +69,7 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
       break;
   }
 
-  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+  // printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
 
   return ret;
 }
@@ -74,7 +100,7 @@ static uint8_t sensor_shtc3_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
       break;
   }
 
-  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+  // printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
 
   return ret;
 }
@@ -106,25 +132,25 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
   if (sht35_set_heater(&sht35, SHT35_BOOL_FALSE))
   {
-    printf("SHT35: heaters gonna heat\n");
+    // printf("SHT35: heaters gonna heat\n");
     goto err;
   }
 
   if (sht35_set_repeatability(&sht35, SHT35_REPEATABILITY_HIGH))
   {
-    printf("SHT35: repatability failed\n");
+    // printf("SHT35: repatability failed\n");
     goto err;
   }
 
   uint16_t status;
   if (sht35_get_status(&sht35, &status))
   {
-    printf("SHT35: reading status failed\n");
+    // printf("SHT35: reading status failed\n");
     goto err;
   }
   else
   {
-    printf("SHT35: status %X\n", status);
+    // printf("SHT35: status %X\n", status);
   }
 
   int32_t t;
@@ -145,10 +171,13 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
 static inline obtain_t sensor_sht3x_obtain(any_sensor_t *ctx, int32_t *temperature, uint16_t *pressure, uint16_t *humidity)
 {
-  if (sht35_single_read(&sht35, SHT35_BOOL_TRUE, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+  if (sht35_single_read(&sht35, SHT35_BOOL_TRUE, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
   {
     return OBTAIN_ERROR;
   }
+
+  *humidity = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+  *temperature = QUANTIZE_TEMP(shtxx_t_fpt(tmp_raw_temperature16));
 
   return OBTAIN_HUMIDITY | OBTAIN_TEMPERATURE;
 }
@@ -183,20 +212,26 @@ static inline uint8_t sensor_sht4x_probe(any_sensor_t *ctx)
 
 static inline obtain_t sensor_sht4x_obtain(any_sensor_t *ctx, int32_t *temperature, uint16_t *pressure, uint16_t *humidity)
 {
-  if (sht4x_read(&sht4x, SHT4X_MODE_HIGH_PRECISION_WITH_NO_HEATER, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+  if (sht4x_read(&sht4x, SHT4X_MODE_HIGH_PRECISION_WITH_NO_HEATER, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
   {
     return OBTAIN_ERROR;
   }
+
+  *humidity = QUANTIZE_HUM(sht4x_h_fpt(tmp_raw_humidity16));
+  *temperature = QUANTIZE_TEMP(shtxx_t_fpt(tmp_raw_temperature16));
 
   return OBTAIN_HUMIDITY | OBTAIN_TEMPERATURE;
 }
 
 static inline obtain_t sensor_shtc3_obtain(any_sensor_t *ctx, int32_t *temperature, uint16_t *pressure, uint16_t *humidity)
 {
-  if (shtc3_read(&shtc3, SHTC3_BOOL_TRUE, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+  if (shtc3_read(&shtc3, SHTC3_BOOL_TRUE, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
   {
     return OBTAIN_ERROR;
   }
+
+  *humidity = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+  *temperature = QUANTIZE_TEMP(shtxx_t_fpt(tmp_raw_temperature16));
 
   return OBTAIN_HUMIDITY | OBTAIN_TEMPERATURE;
 }

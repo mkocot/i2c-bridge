@@ -1,7 +1,8 @@
 #ifndef _FUNCONFIG_H
 #define _FUNCONFIG_H
 
-#define CH32V003                    (1)
+// defined in platformio.ini
+//#define CH32V003                    (1)
  
 #define FUNCONF_DEBUG_HARDFAULT     (0)
 #define FUNCONF_USE_DEBUGPRINTF     (1)

@@ -6,6 +6,22 @@
 
 #include <driver_aht30.h>
 
+static inline fpt ahtxx_t_fpt(uint32_t val)
+{
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, fl2fpt(12.5f));
+    as_fpt = fpt_sub(as_fpt, i2fpt(50));
+
+    return as_fpt;
+}
+
+static inline fpt athxx_h_fpt(uint32_t val)
+{
+    fpt as_fpt = val;
+    as_fpt = fpt_mul(as_fpt, fl2fpt(6.25f));
+    return as_fpt;
+}
+
 #define AHTXX_ADDRESS (0x38)
 
 static aht30_handle_t aht30;
@@ -36,10 +52,13 @@ static obtain_t sensor_aht30_obtain(any_sensor_t *ctx, int32_t *temperature, uin
 
   aht30.inited = 1;
 
-  if (aht30_read_temperature_humidity(&aht30, &tmp_raw_temperature, &tmp_temperature, &tmp_raw_humidity, &tmp_humidity8))
+  if (aht30_read_temperature_humidity(&aht30, &tmp_raw_temperature, NULL, &tmp_raw_humidity, NULL))
   {
     return OBTAIN_ERROR;
   }
+
+  *temperature = QUANTIZE_TEMP(ahtxx_t_fpt(tmp_raw_temperature));
+  *humidity = QUANTIZE_HUM(athxx_h_fpt(tmp_raw_humidity));
 
   return OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY;
 }

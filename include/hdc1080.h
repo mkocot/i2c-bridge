@@ -10,6 +10,25 @@
 #define TEMP_RESOLUTION HDC1080_TEMPERATURE_RESOLUTION_14_BIT
 #define HUMI_RESOLUTION HDC1080_HUMIDITY_RESOLUTION_14_BIT
 
+static inline fpt hdc1080_t_fpt(uint16_t val) {
+    #if 1
+    // 0.010492 0.000332
+    fpt as_fpt = val;
+    // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 15));
+    // +166 is magic adjustement
+    as_fpt = fpt_mul(as_fpt, i2fpt(165) + 166);
+    #else
+    fpt as_fpt = i2fpt(val);
+    // 0.079309 0.002472
+    as_fpt = fpt_div(as_fpt, i2fpt(65535));
+    as_fpt = fpt_mul(as_fpt, i2fpt(165));
+    #endif
+
+    as_fpt = fpt_sub(as_fpt, i2fpt(40));
+
+    return as_fpt;
+}
+
 static hdc1080_handle_t hdc1080;
 
 static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
@@ -32,11 +51,11 @@ static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
 
     if (zeros == sizeof(serial) / sizeof(serial[0]))
     {
-        printf("???\n");
+        // printf("???\n");
         return 1;
     }
 
-    printf("Serial: %x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
+    // printf("Serial: %x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
 
     DO_OR(hdc1080_set_heater(&hdc1080, HDC1080_BOOL_FALSE));
     DO_OR(hdc1080_set_mode(&hdc1080, HDC1080_MODE_SEQUENCE));
@@ -52,15 +71,14 @@ static obtain_t sensor_hdc1080_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p
 
     i2c.addr = DRIVER_HDC1080_ADDRESS;
 
-    if (hdc1080_read_temperature_humidity(&hdc1080, &tmp_raw_temperature16, &tmp_temperature, &tmp_raw_humidity16, &tmp_humidity_f))
+    if (hdc1080_read_temperature_humidity(&hdc1080, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
     {
         return OBTAIN_ERROR;
     }
-
-    int full = (int)tmp_temperature;
-    int fraction = (int)(tmp_temperature * 100 - full * 100);
-
-    printf("T: %d.%d, H: %d\n", full, fraction, (int)tmp_humidity_f);
+#if 1
+    *t = QUANTIZE_TEMP(hdc1080_t_fpt(tmp_raw_temperature16));
+    *h = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+#endif
 
     return OBTAIN_TH;
 }
