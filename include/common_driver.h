@@ -106,7 +106,7 @@ static inline uint8_t libdriver_nop_void(void) { return 0; }
   DRIVER_## DRIVER ##_LINK_IIC_READ_ADDRESS16((HANDLE), libdriver_iic_addr16_read); \
   DRIVER_## DRIVER ##_LINK_IIC_WRITE_ADDRESS16((HANDLE), libdriver_iic_addr16_write)
 
-static inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
-static inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
+uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
+uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
 
 #endif

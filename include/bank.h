@@ -41,7 +41,7 @@ typedef struct
 static uint8_t bank_active_count(const bank_t *bank)
 {
   uint8_t active = 0;
-  for (int i = 0; i < 2; ++i)
+  for (int i = 0; i < BANK_MAX_SENSORS; ++i)
   {
     const active_sensor_t *sensor = &bank->sensors[i];
     if (sensor->type == 0)
@@ -72,8 +72,8 @@ static uint8_t bank_has_sensor(const bank_t *bank, sensor_t type)
 
 static sensor_t bank_active_sensors(const bank_t *bank)
 {
-  sensor_t sensors = 0;
-  for (int i = 0; i < 2; ++i)
+  sensor_t sensors = SENSOR_NONE;
+  for (int i = 0; i < BANK_MAX_SENSORS; ++i)
   {
     sensors |= bank->sensors[i].type;
   }

@@ -99,6 +99,76 @@ bank_t banks[BANKS_COUNT] = {
 
 static void loop();
 
+/* better name for this, not "init" per se, more like create? */
+static uint8_t init_pt100_driver()
+{
+  DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
+  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, NULL);
+  DRIVER_MAX31865_LINK_DELAY_MS(&max31865, libdriver_delay_ms);
+  DRIVER_MAX31865_LINK_SPI_INIT(&max31865, libdriver_nop_void);
+  DRIVER_MAX31865_LINK_SPI_DEINIT(&max31865, libdriver_nop_void);
+  DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
+  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, &libdriver_iic_write);
+
+  return 0;
+}
+
+static uint8_t init_pt100()
+{
+  init_pt100_driver();
+
+  uint8_t err;
+  if ((err = max31865_init(&max31865)))
+  {
+    DPRINTF("PT100 init failed: %d\n", err);
+    return err;
+  }
+
+  if ((err = max31865_set_fault_detection_cycle_control(&max31865, MAX31865_FAULT_DETECTION_CYCLE_CONTROL_NO_ACTION)))
+  {
+    DPRINTF("PT100 sfdcc: %d\n", err);
+    return err;
+  }
+  /* we are using manual fault check, */
+  #if 0
+  max31865_set_high_fault_threshold
+  max31865_set_low_fault_threshold
+  #endif
+
+  /* should not matter at all, it's battery powered device */
+  #if 0
+  max31865_set_filter_select(&max31865, MAX31865_FILTER_SELECT_50HZ);
+  #endif
+
+
+  /* required when fetching temperature directly, debug only */
+  if ((err = max31865_set_reference_resistor(&max31865, 430.0f)))
+  {
+    DPRINTF("reference fail\n");
+    return err;
+  }
+  if ((err = max31865_set_resistor(&max31865, MAX31865_RESISTOR_100PT)))
+  {
+    DPRINTF("resistor failed\n");
+    return err;
+  }
+
+  /* ensure voltage is not enabled by default, it might be on when only MCU has gone
+   * through power cycle
+   */
+  if ((err = max31865_set_vbias(&max31865, MAX31865_BOOL_FALSE)))
+  {
+    DPRINTF("vbias failed\n");
+    return err;
+  }
+
+  if ((err = max31865_set_wire(&max31865, MAX31865_WIRE_3)))
+  {
+    DPRINTF("wire failed\n");
+  }
+
+  return err;
+}
 
 void spi_fun(void)
 {
@@ -107,26 +177,57 @@ void spi_fun(void)
     .byte_order = SPI_MSB_FIRST,
     .frame_size = SPI_FRAME_8BITS,
     .mode = SPI_MODE0,
-    .nss_pin = PC0,
+    .nss_pin = PC1,
+    // .mode = SPI_MODE1,
+    // .nss_pin = PC0,
   };
 
-  spi_init(&spi, &cfg);
+  DPRINTF("SPI init\n");
 
+
+  if (spi_init(&spi, &cfg) != SPI_ERR_OK)
+  {
+    DPRINTF("SPI init failed\n");
+  }
+
+  // init_pt100();
+
+  spi_err_t spi_err;
   while(1) {
+    #if 1
     uint64_t cycles = SysTick->CNT;
 
-    spi_begin_transaction(&spi);
+    if ((spi_err = spi_begin_transaction(&spi)))
+    {
+      DPRINTF("SPI_FAIL: begin T: %d\n", spi_err);
+    }
 
     spi_send8(0xD0);
 
     uint8_t chip_id = spi_recv8(0x00);
 
-
-    spi_end_transaction(&spi);
+    if ((spi_err = spi_end_transaction(&spi)))
+    {
+      DPRINTF("SPI_FAIL: end T: %d\n", spi_err);
+    }
 
     uint64_t elapsed = SysTick->CNT - cycles;
 
     printf("Chip id: %X (%04d)\n", chip_id, (int)elapsed);
+    #else
+    if (max31865_single_read(&max31865, &tmp_raw_temperature16, &tmp_temperature))
+    {
+      DPRINTF("read fialed\n");
+    }
+    else
+    {
+      int a, b;
+      a = (int)tmp_temperature;
+      b = (tmp_temperature - a) * 100;
+      DPRINTF("T: %d.%d\n", a, b);
+    }
+    #endif
+
     Delay_Ms(2000);
 
     // break;
@@ -780,8 +881,6 @@ int main()
     //     printf("NONE\n"); break;
     // }
 
-  #endif
-
   printf("Hello?\n");
 
 # if 1
@@ -791,6 +890,8 @@ int main()
     printf("TICK\n");
   }
 # endif /* 0 */
+  #endif
+
 #endif
   // #define RCC_CSS 0 /* disable */
   // #define HSEBYP 0 /* HSE bypass (disable) */
@@ -803,7 +904,7 @@ int main()
   // uart_fun();
   // asdf();
 
-  // spi_fun();
+  spi_fun();
 
 
   initializeGPIO();
@@ -959,26 +1060,22 @@ int main()
   return 1;
 }
 
-static void bank_fetch(bank_t *bank)
+static void bank_fetch(uint8_t bank_id)
 {
-  bank_check_new(bank);
+  bank_t *bank = &banks[bank_id];
+  if (bank_check_new(bank))
+  {
+
+  }
 
   int32_t temp;
   uint16_t pres;
   uint16_t hum;
 
-  int bank_id;
-  for (int i = 0; i < BANKS_COUNT; ++i)
-  {
-    if (&banks[i] == bank)
-    {
-      bank_id = i;
-      break;
-    }
-  }
-
   if (bank_active_count(bank) == 0)
   {
+    DPRINTF("Bank %d without sensors\n", bank_id);
+
     return;
   }
 
@@ -986,7 +1083,7 @@ static void bank_fetch(bank_t *bank)
   for (int i = 0; i < BANK_MAX_SENSORS; i++)
   {
     active_sensor_t *sensor = &bank->sensors[i];
-    if (sensor->type == 0)
+    if (sensor->type == SENSOR_NONE)
     {
       break;
     }
@@ -1003,17 +1100,17 @@ static void bank_fetch(bank_t *bank)
 
     if (result & OBTAIN_HUMIDITY)
     {
-      packet_put_reading(&packet, 0, i, OBTAIN_HUMIDITY, hum);
+      packet_put_reading(&packet, bank_id, i, OBTAIN_HUMIDITY, hum);
     }
 
     if (result & OBTAIN_PRESSURE)
     {
-      packet_put_reading(&packet, 0, i, OBTAIN_PRESSURE, pres);
+      packet_put_reading(&packet, bank_id, i, OBTAIN_PRESSURE, pres);
     }
 
     if (result & OBTAIN_TEMPERATURE)
     {
-      packet_put_reading(&packet, 0, i, OBTAIN_TEMPERATURE, temp);
+      packet_put_reading(&packet, bank_id, i, OBTAIN_TEMPERATURE, temp);
     }
 
     ++active;
@@ -1027,7 +1124,8 @@ static void bank_fetch(bank_t *bank)
 
 void loop()
 {
-  printf("LOOP\n");
+  DPRINTF("LOOP\n");
+
   packet_clear_readings(&packet);
 
   if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
@@ -1037,104 +1135,26 @@ void loop()
 
   for (int b = 0; b < BANKS_COUNT; ++b)
   {
-    bank_fetch(&banks[b]);
+    bank_fetch(b);
   }
-  // for (unsigned b = 0; b < sizeof(banks)/sizeof(banks[0]); ++b)
-  // {
-  //   bank_check_new(&banks[b]);
 
-  //   arena_pool[b] = banks[b].sensors;
-  //   printf("Set bank: %d@%d\n", b, banks[b].channel);
-  //   if (tca9548a_channel_set(&tca9548a, banks[b].channel))
-  //   {
-  //     printf("failed to enable channel: %d\n", banks[b].channel);
-  //     continue;
-  //   }
-
-  //   i2c_scan(i2c_scan_callback);
-  // }
-
-  // tca9548a_reset(&tca9548a);
-  Delay_Ms(2000);
-
-  return;
-  #if 0
-
-  for (unsigned i = 0; i < sizeof(banks) / sizeof(banks[0]); ++i)
+  if (packet_sensor_readings(&packet))
   {
-    struct bank_t *b = &banks[i];
-
-    // it will set correct mux configuration
-    printf("Begin bank: %d\n", i);
-    bank_check_new(b);
-
-    if (b->sensors & SENSOR_BMP280)
+    uint8_t packet_size = sizeof(packet_pool);
+    if (packet_to_bytes(&packet, packet_pool, &packet_size))
     {
-      // bmp280 cannot be shared with all sensor, there is internal state
-      bmp280_iic_init();
+      DPRINTF("unable to store packet in bytes");
 
-      uint32_t t_raw, p_raw;
-      bmp280_temperature_t ti;
-      bmp280_pressure_t pi;
-      if (!bmp280_read_temperature_pressure(&bmp280, &t_raw, &ti, &p_raw, &pi))
-      {
-        printf("BMP280: T=%lu.%lu P=%lu\n", ti / 100, ti % 100, pi / 256);
-      } else {
-        printf("BMP280: FIALED\n");
-      }
-
-      // if (h_raw != 0x80000)
-      // {
-      //   // Q24 -> 8 fractional
-      //   p = (float)(uint32_t)(pi) / (float)(1 << 8);
-      // }
-      // else
-      // {
-      //   p = -1.0f;
-      // }
-
-      // if (t_raw != 0x80000)
-      // {
-      //   t = (float)(ti * 0.01f);
-      // }
-      // else
-      // {
-      //   t = -280.0;
-      // }
-
+      goto end;
     }
 
-    // NOTE(m): AHT20 and AHT30 uses same code
-    // just use AHT30 for everything
-
-    if (b->sensors & SENSOR_AHT)
-    {
-      uint32_t t_raw, h_raw;
-      float t;
-      uint8_t h;
-
-      aht30_iic_init();
-      // We know there is no per-chip values required for reading data
-      // just ensure struct is marked as 'inited' before trying to read
-      // from sensor
-      aht30.inited = 1;
-      if (aht30_read_temperature_humidity(&aht30, &t_raw, &t, &h_raw, &h))
-      {
-        printf("AHT: FIALED\n");
-      }
-      else
-      {
-        printf("AHT: H=%d\n", h);
-      }
-    }
+    DPRINTF("Packet size: %d\n", packet_size);
   }
-    #endif
-  // printf("Let's the scan begin\n");
-  // i2c_scan(i2c_scan_callback);
-  // printf("Scan done\n");
+  else
+  {
+    DPRINTF("No sensors stored in packet\n");
+  }
 
-  // Delay_Ms(5000);
-  // return;
-
-  Delay_Ms(6000);
+  end:
+  Delay_Ms(2000);
 }
