@@ -15,7 +15,10 @@
 #endif
 
 #include <ch32v003_GPIO_branchless.h>
+#include <ch32v003_SPI.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 /**
  * All methods return conforms to standard C rules where 0 means OK
@@ -129,7 +132,8 @@ typedef enum spi_byte_order_e {
 struct spi_device_s
 {
   /* use hardware or software NSS */
-  uint8_t nss_pin;
+  uint8_t nss_pin:7;
+  uint8_t is_hw:1;
 };
 
 
@@ -154,7 +158,9 @@ static uint8_t spi_on()
 
 typedef struct spi_init_s {
   /* 0 - default */
-  uint8_t nss_pin;
+  uint8_t nss_pin:7;
+  /* 0/false - default */
+  bool nss_force_software:1;
   /* 0 - CPOL0 CPHA0 */
   spi_mode_t mode;
   /* 0 - 8b */
@@ -188,7 +194,9 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
   config |= SPI_Direction_2Lines_FullDuplex;
   /* 24Mhz@48MHz MCU
   BR -> Configure clock */
-  config |= SPI_BaudRatePrescaler_16; // 48 / 16 -> 3
+  /* lower baud rate might be required for borked 1 and 3 mode */
+  // config |= SPI_BaudRatePrescaler_16; // 48 / 16 -> 3
+  config |= SPI_BaudRatePrescaler_128; // 48 / 16 -> 3
   /*  SSI (1-> NSS pin is HIGH, 0 -> NSS pin is LOW on selection)
   REQUIRED TO BE 1 */
   config |= SPI_NSSInternalSoft_Set;
@@ -216,6 +224,20 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
 
   handle->nss_pin = cfg->nss_pin;
 
+  /* default pin mode */
+  if (handle->nss_pin == 0)
+  {
+    handle->nss_pin = PC1;
+  }
+
+  /* NOTE(m): Swotware pin might be required for borked 1 and 3 mode */
+  handle->is_hw = SPI_IS_HW_PIN(handle->nss_pin);
+
+  if (cfg->nss_force_software)
+  {
+    handle->is_hw = false;
+  }
+
   funGpioInitC();
   /* Enable clock for PORTC, SPI1 */
   RCC->APB2PCENR |= RCC_IOPCEN | RCC_APB2Periph_SPI1;
@@ -224,20 +246,23 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
   funPinMode(PC6, FUN_OUTPUT_MULTIPLEXED);  /* MOSI (16) */
   funPinMode(PC5, FUN_OUTPUT_MULTIPLEXED);  /* SCK (15) */
 
+
   /*
     Hardware Master or Slave mode:  Float, pull-up or pull-down input
     Hardware Master mode/NSS output enable mode: Push-pull multiplexed output */
-  if (SPI_IS_HW_PIN(handle->nss_pin))
+  if (handle->is_hw)
   {
     /* SSM 1: software control, 0: hardware controle */
     config |= SPI_NSS_Hard;
 
-    if (!handle->nss_pin || handle->nss_pin == PC1)
+    if (handle->nss_pin == PC1)
     {
+      printf("HW1\n");
       funPinMode(PC1, FUN_OUTPUT_MULTIPLEXED);  /* NSS (11) */
     }
     else
     {
+      printf("HW0\n");
       /* remap HW NSS to PC0 */
       AFIO->PCFR1 |= GPIO_Remap_SPI1;
       funPinMode(PC0, FUN_OUTPUT_MULTIPLEXED);  /* NSS (10) */
@@ -320,7 +345,7 @@ spi_err_t spi_begin_transaction(spi_device_t *handle)
     SPI1->CTLR1 |= SPI_CTLR1_SPE;
   }
 
-  if (SPI_IS_HW_PIN(handle->nss_pin))
+  if (handle->is_hw)
   {
     return SPI_ERR_OK;
   }
@@ -342,7 +367,7 @@ spi_err_t spi_end_transaction(spi_device_t *handle)
     SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
   }
 
-  if (SPI_IS_HW_PIN(handle->nss_pin))
+  if (handle->is_hw)
   {
     return SPI_ERR_OK;
   }
