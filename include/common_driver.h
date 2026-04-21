@@ -8,46 +8,47 @@
 #include "spi.h"
 #include <fptc.h>
 
-static i2c_device_t i2c = {
-    .clkr = I2C_CLK_400KHZ, /* "default" */
-    .type = I2C_ADDR_7BIT,  /* common addr type */
-    .addr = 0x00,           /* device addres */
-    .regb = 1,              /* register bytes, most devices uses 1 byte for register */
-    .tout = 2000            /* cycles ?*/
-};
+/* shared i2c struct */
+extern i2c_device_t i2c;
 
-static spi_device_t spi = {
-  .nss_pin = -1,
-};
+/* shared spi struct */
+extern spi_device_t spi;
 
 /* temporal values used for reading sensor data */
-static union {
+typedef union {
   uint32_t u32;
   uint16_t u16;
   int16_t i16;
-} tmp_raw_t;
+} tmp_raw_t_t;
+
+extern tmp_raw_t_t tmp_raw_t;
 
 #define tmp_raw_temperature (tmp_raw_t.u32)
 #define tmp_raw_temperature16 (tmp_raw_t.u16)
 #define tmp_raw_temperaturei16 (tmp_raw_t.i16)
 
-static uint32_t tmp_raw_pressure;
-static float tmp_temperature;
-static float tmp_pressure;
-static union {
+extern uint32_t tmp_raw_pressure;
+extern float tmp_temperature;
+extern float tmp_pressure;
+
+typedef union {
   float f;
   uint16_t u16;
   uint8_t u8;
-} tmp_h;
+} tmp_h_t;
+
+extern tmp_h_t tmp_h;
 
 #define tmp_humidity_f (tmp_h.f)
 #define tmp_humidity16 (tmp_h.u16)
 #define tmp_humidity8 (tmp_h.u8)
 
-static union {
+typedef union {
   uint32_t u32;
   uint16_t u16;
-} tmp_raw_h;
+} tmp_raw_h_t;
+
+extern tmp_raw_h_t tmp_raw_h;
 
 #define tmp_raw_humidity (tmp_raw_h.u32)
 #define tmp_raw_humidity16 (tmp_raw_h.u16)

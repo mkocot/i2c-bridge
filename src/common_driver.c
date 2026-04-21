@@ -2,6 +2,33 @@
 
 #include <lib_i2c.h>
 
+/* i2c default configuration */
+i2c_device_t i2c = {
+    .clkr = I2C_CLK_400KHZ, /* "default" */
+    .type = I2C_ADDR_7BIT,  /* common addr type */
+    .addr = 0x00,           /* device addres */
+    .regb = 1,              /* register bytes, most devices uses 1 byte for register */
+    .tout = 2000            /* cycles ?*/
+};
+
+/* spi default configuration */
+spi_device_t spi = {
+  /* use default config */
+};
+
+
+/* temporal values used for reading sensor data */
+tmp_raw_t_t tmp_raw_t;
+
+uint32_t tmp_raw_pressure;
+
+float tmp_temperature;
+
+float tmp_pressure;
+
+tmp_h_t tmp_h;
+
+tmp_raw_h_t tmp_raw_h;
 
 inline uint8_t libdriver_iic_write(uint8_t reg, uint8_t *buf, uint16_t len)
 {
@@ -120,7 +147,7 @@ inline uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len)
 {
   spi_begin_transaction(&spi);
 
-  printf("W: reg=%X, len=%d\n", reg, len);
+  // printf("W: reg=%X, len=%d\n", reg, len);
   spi_send8(reg);
   for (int i = 0; i < len; ++i)
   {
@@ -139,17 +166,18 @@ inline uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len)
   */
   spi_begin_transaction(&spi);
 
-  printf("R: reg=%X, len=%d\n", reg, len);
+  // printf("R: reg=%X, len=%d\n", reg, len);
   spi_send8(reg);
-  printf("Data: ");
+  // printf("Data: ");
   // 2240 0 4 2244 8c4
   for (int i = 0; i < len; ++i)
   {
-    buf[i] = spi_recv8(buf[i]);
+    // emit bogus values for recv
+    buf[i] = spi_recv8(0xFF);//buf[i]);
 
-    printf("%X ", buf[i]);
+    // printf("%X ", buf[i]);
   }
-  printf("\n");
+  // printf("\n");
 
   spi_end_transaction(&spi);
 
