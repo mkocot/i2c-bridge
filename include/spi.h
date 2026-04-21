@@ -16,9 +16,9 @@
 
 #include <ch32v003_GPIO_branchless.h>
 #include <ch32v003_SPI.h>
-#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+/* #include <stdio.h> */
 
 /**
  * All methods return conforms to standard C rules where 0 means OK
@@ -30,11 +30,11 @@
 
 /* 1：SPI is busy in communication or Tx buffer is not empty */
 #define SPI_WAIT_FOR_IDLE() \
-	do {} while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY)
+  do {} while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY)
 
 /* 1：Rx buffer not empty */
 #define SPI_WAIT_FOR_RX_AVAILABLE() \
-	do {} while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE)
+  do {} while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE)
 
 
 #define SPI_WAIT_TRANSFER_COMPLETE() \
@@ -59,7 +59,7 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg);
  * 
  * @return spi_err_t, SPI_ERR_OK (0) when OK
  */
-static spi_err_t spi_begin_transaction(spi_device_t *handle);
+static spi_err_t spi_begin_transaction(const spi_device_t *handle);
 
 /**
  * @brief Begin SPI transaction
@@ -67,7 +67,7 @@ static spi_err_t spi_begin_transaction(spi_device_t *handle);
  * 
  * @return spi_err_t, SPI_ERR_OK (0) when OK
  */
-static spi_err_t spi_end_transaction(spi_device_t *handle);
+static spi_err_t spi_end_transaction(const spi_device_t *handle);
 
 /**
  * @brief Receive 8 bits of data. Requires active transaction.
@@ -151,7 +151,7 @@ static uint8_t spi_on()
   funGpioInitC();
 
   /* Start clocks for: GPIO C and SPI1 */
-	RCC->APB2PCENR |= RCC_APB2Periph_SPI1 | RCC_APB2Periph_GPIOC;
+  RCC->APB2PCENR |= RCC_APB2Periph_SPI1 | RCC_APB2Periph_GPIOC;
 
   return 0;
 }
@@ -184,19 +184,19 @@ typedef enum spi_err_e {
   (((PIN) == PC0) || ((PIN) == PC1))
 
 #define SPI_INITIALIZED(DEVICE) \
-  (!!(DEVICE)->nss_pin)
+  (!!((DEVICE)->nss_pin))
 
 
 static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
 {
-
   uint16_t config = SPI_Mode_Master;
   config |= SPI_Direction_2Lines_FullDuplex;
   /* 24Mhz@48MHz MCU
   BR -> Configure clock */
   /* lower baud rate might be required for borked 1 and 3 mode */
   // config |= SPI_BaudRatePrescaler_16; // 48 / 16 -> 3
-  config |= SPI_BaudRatePrescaler_128; // 48 / 16 -> 3
+  // config |= SPI_BaudRatePrescaler_128; // 48 / 16 -> 3
+  config |= SPI_BaudRatePrescaler_256; // 48 / 16 -> 3
   /*  SSI (1-> NSS pin is HIGH, 0 -> NSS pin is LOW on selection)
   REQUIRED TO BE 1 */
   config |= SPI_NSSInternalSoft_Set;
@@ -257,12 +257,10 @@ static spi_err_t spi_init(spi_device_t *handle, const spi_init_t *cfg)
 
     if (handle->nss_pin == PC1)
     {
-      printf("HW1\n");
       funPinMode(PC1, FUN_OUTPUT_MULTIPLEXED);  /* NSS (11) */
     }
     else
     {
-      printf("HW0\n");
       /* remap HW NSS to PC0 */
       AFIO->PCFR1 |= GPIO_Remap_SPI1;
       funPinMode(PC0, FUN_OUTPUT_MULTIPLEXED);  /* NSS (10) */
@@ -310,11 +308,13 @@ static void spi_send8(uint8_t data)
 
   SPI_WAIT_FOR_EMPTY_TX();
 
-	SPI1->DATAR = data;
+  SPI1->DATAR = data;
   SPI_WAIT_FOR_IDLE();
 
-  // not required?
-	// while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE){};
+#if 0
+  /* not required? */
+  while((SPI1->STATR & SPI_STATR_RXNE) != SPI_STATR_RXNE){};
+#endif
 
   /* WARNING: discaring result is mandatory */
   data = (uint8_t)SPI1->DATAR;
@@ -328,13 +328,13 @@ static uint8_t spi_recv8(uint8_t dummy)
     return dummy;
   }
 
-	SPI1->DATAR = dummy;
+  SPI1->DATAR = dummy;
   SPI_WAIT_FOR_RX_AVAILABLE();
 	
-	return (uint8_t)SPI1->DATAR;
+  return (uint8_t)SPI1->DATAR;
 }
 
-spi_err_t spi_begin_transaction(spi_device_t *handle)
+spi_err_t spi_begin_transaction(const spi_device_t *handle)
 {
   if (!SPI_INITIALIZED(handle))
   {
@@ -356,7 +356,7 @@ spi_err_t spi_begin_transaction(spi_device_t *handle)
 
 }
 
-spi_err_t spi_end_transaction(spi_device_t *handle)
+spi_err_t spi_end_transaction(const spi_device_t *handle)
 {
   if (!SPI_INITIALIZED(handle))
   {
