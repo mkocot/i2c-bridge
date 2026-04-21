@@ -21,6 +21,39 @@ typedef enum
   SENSOR_MCP9808 = 1 << 10,
 } sensor_t;
 
+static const char* sensor_to_str(sensor_t sensor)
+{
+  switch (sensor)
+  {
+    case SENSOR_NONE:
+      return "none";
+    case SENSOR_AHT:
+      return "ahtxx";
+    case SENSOR_BMP280:
+      return "bmp280";
+    case SENSOR_BME280:
+      return "bme280";
+    case SENSOR_SHT3X:
+      return "sht3x";
+    case SENSOR_SHT4X:
+      return "sht4x";
+    case SENSOR_SHTC3:
+      return "shtc3";
+    case SENSOR_HTU21D:
+      return "htu21d";
+    case SENSOR_HTU31D:
+      return "htu31d";
+    case SENSOR_SI7021:
+      return "si7021";
+    case SENSOR_HDC1080:
+      return "hdc1080";
+    case SENSOR_MCP9808:
+      return "mcp9808";
+    default:
+      return "unknown";
+  }
+}
+
 typedef struct {
   sensor_t type;
   any_sensor_t *sensor;
