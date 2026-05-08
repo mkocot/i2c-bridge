@@ -82,11 +82,10 @@ static packet_t packet;
  * single SPI connected sensor
  * just output "raw" reading and do convoluted conversion on received side
  */
-static max31865_handle_t max31865;
+static max31865_handle_t max31865 = {0};
 
 /* single I2C multiplexer */
-static tca9548a_handle_t tca9548a;
-// sht, dht, ...
+static tca9548a_handle_t tca9548a = {0};
 
 #define BANKS_COUNT (4)
 
