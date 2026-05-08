@@ -102,12 +102,12 @@ static void loop();
 static uint8_t init_pt100_driver()
 {
   DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
-  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, NULL);
+  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, debug_print);
   DRIVER_MAX31865_LINK_DELAY_MS(&max31865, libdriver_delay_ms);
-  DRIVER_MAX31865_LINK_SPI_INIT(&max31865, libdriver_nop_void);
   DRIVER_MAX31865_LINK_SPI_DEINIT(&max31865, libdriver_nop_void);
+  DRIVER_MAX31865_LINK_SPI_INIT(&max31865, libdriver_nop_void);
   DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
-  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, &libdriver_iic_write);
+  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, &libdriver_spi_write);
 
   return 0;
 }
@@ -115,6 +115,24 @@ static uint8_t init_pt100_driver()
 static uint8_t init_pt100()
 {
   init_pt100_driver();
+
+  DPRINTF("SPI init\n");
+
+  spi_init_t cfg = {
+    .byte_order = SPI_MSB_FIRST,
+    .frame_size = SPI_FRAME_8BITS,
+    .mode = SPI_MODE1, // 1 or 3
+    .nss_pin = PC0,
+  };
+
+
+
+  if (spi_init(&spi, &cfg) != SPI_ERR_OK)
+  {
+    DPRINTF("SPI init failed\n");
+
+    return 1;
+  }
 
   uint8_t err;
   if ((err = max31865_init(&max31865)))
