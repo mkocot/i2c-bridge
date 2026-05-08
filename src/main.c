@@ -64,10 +64,10 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_HDC1080, &sensor_factory_HDC1080},
   {SENSOR_HTU31D, &sensor_factory_HTU31D},
   {SENSOR_HTU21D, &sensor_factory_HTU21D},
+  {SENSOR_SI7021, &sensor_factory_SI7021},
   {SENSOR_SHT3X, &sensor_factory_SHT3X},
   {SENSOR_SHT4X, &sensor_factory_SHT4X},
   {SENSOR_SHTC3, &sensor_factory_SHTC3},
-  {SENSOR_SI7021, &sensor_factory_SI7021},
   {SENSOR_MCP9808, &sensor_factory_MCP9808},
 };
 
