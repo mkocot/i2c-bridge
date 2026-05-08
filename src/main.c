@@ -582,7 +582,7 @@ static uint8_t bank_check_new(bank_t *bank)
 
   if (tca9548a_channel_set(&tca9548a, bank->channel))
   {
-    DPRINTF("channel failed");
+    DPRINTF("channel failed\n");
     return 1;
   }
 
@@ -591,7 +591,7 @@ static uint8_t bank_check_new(bank_t *bank)
   if ((sensors & (SENSOR_BMP280 | SENSOR_AHT)) == (SENSOR_BMP280 | SENSOR_AHT))
   {
     /* bank has bmp280 and aht nothing more to check*/
-    DPRINTF("Both AHTxx and BMP280 already detected\n");
+    DPRINTF("both AHTxx and BMP280 already detected\n");
 
     return 0;
   }
@@ -604,21 +604,21 @@ static uint8_t bank_check_new(bank_t *bank)
 
   if (sensors & SENSOR_BMP280)
   {
-    DPRINTF("Has BMP280, check for AHTxx\n");
+    DPRINTF("has BMP280, check for AHTxx\n");
     sensor_id = 1;
     /* check for companion */
     sensors_to_check = SENSOR_AHT;
   }
   else if (sensors & SENSOR_AHT)
   {
-    DPRINTF("Has AHTxx, check for BMP280\n");
+    DPRINTF("has AHTxx, check for BMP280\n");
     sensor_id = 1;
     /* has bmp280 or aht check for possible companion */
     sensors_to_check = SENSOR_BMP280;
   } 
   else if (sensors)
   {
-    DPRINTF("Bank already has detected sensor\n");
+    DPRINTF("bank already has detected sensor, skip check\n");
     /* if bank has any other sensor then nothing else to check */
     return 0;
   }
@@ -630,17 +630,19 @@ static uint8_t bank_check_new(bank_t *bank)
 
     if ((supported_sensor->sensor & sensors_to_check) == 0)
     {
-      DPRINTF("skip sensor\n");
+      DPRINTF("skip sensor: %s\n", sensor_to_str(supported_sensor->sensor));
       /* sensor is not allowed to check, skip */
       continue;
     }
 
     if (sensor_check(supported_sensor, &addr, &response, &bank->arena))
     {
-      DPRINTF("not detected\n");
+      // DPRINTF("not detected: %s\n", sensor_to_str(supported_sensor->sensor));
       /* sensor is not detected */
       continue;
     }
+
+    DPRINTF("found: %s\n", sensor_to_str(supported_sensor->sensor));
 
     bank->sensors[sensor_id].type = supported_sensor->sensor;
     bank->sensors[sensor_id++].sensor = supported_sensor->factory->construct(&bank->arena);
@@ -656,17 +658,6 @@ static uint8_t bank_check_new(bank_t *bank)
   return 0;
 }
 
-
-/* MUX configuration is out of this scope */
-
-// DMA transfer completion interrupt. It will fire when the DMA transfer is
-// complete. We use it just to blink the LED
-__attribute__((interrupt)) __attribute__((section(".srodata")))
-void DMA1_Channel4_IRQHandler(void)
-{
-	// Clear flag
-	DMA1->INTFCR |= DMA_CTCIF4;
-}
 
 
 #define RX_BUF_LEN 16 // size of receive circular buffer
@@ -926,28 +917,33 @@ int main()
 
   initializeGPIO();
 
-  // SetupDebugPrintf();
-
-
-  // DRIVER_TCA9548A_LINK_INIT(&tca9548a);
-  // DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
-  // DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
-  // DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
-  // tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0);
-
+  /* Configure I2C for sensors and mux */
   i2c_err_t err = i2c_init(&i2c);
   if (err)
   {
-    printf("Error in init: %d\n", err);
+    DPRINTF("Error in init: %d\n", err);
+  }
+  else
+  {
+    DPRINTF("I2C OK!\n");
   }
 
-  spi_init_t cfg = {
-    .byte_order = SPI_MSB_FIRST,
-    .frame_size = SPI_FRAME_8BITS,
-    .mode = SPI_MODE00,
-    .nss_pin = PC0,
-  };
-  spi_init(&spi, &cfg);
+  /* PT100 will configure SPI for itself */
+  init_pt100();
+
+  DRIVER_TCA9548A_LINK_INIT(&tca9548a);
+  DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
+  DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
+  DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
+  if (tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0))
+  {
+    DPRINTF("Unable to set muxer pin\n");
+  }
+
+  if (tca9548a_init(&tca9548a))
+  {
+    DPRINTF("unable to init muxer\n");
+  }
 
   Delay_Ms(250);
 
@@ -972,82 +968,6 @@ int main()
   // to keep reset pin high
   Delay_Ms(2000);
 
-  int32_t t;
-  uint16_t p;
-  uint16_t h;
-
-  int probed = 0;
-  for (int i = 0; i < supported_sensors_length; ++i) {
-    any_sensor_t* sensor = supported_sensors[i].factory->construct(NULL);
-
-    while(1)
-    {
-      if (probed == 0 && sensor->probe(sensor))
-      {
-        printf("probe failed\n");
-      }
-      else
-      {
-        if (probed == 0) {
-          printf("probe OK\n");
-        }
-
-        probed = 1;
-
-        if (sensor->obtain(sensor, &t, &p, &h) == OBTAIN_ERROR)
-        {
-          printf("obtain failed: %ld %d %d\n", t, p, h);
-          probed = 0;
-        }
-        else
-        {
-          printf("obtain OK\n");
-          break;
-        }
-      }
-      Delay_Ms(2000);
-    }
-
-    supported_sensors[i].factory->destroy(sensor, NULL);
-  }
-
-
-  while (1)
-  {
-    err = tca9548a_init(&tca9548a);
-    if (!err)
-    {
-      printf("mux OK\n");
-      break;
-    }
-
-    printf("mux failed: %d\n", err);
-
-    tca9548a_reset(&tca9548a);
-    Delay_Ms(1000);
-  }
-
-  if (tca9548a_channel_set(&tca9548a, banks[2].channel) == 0)
-  {
-    while (1) {
-      printf("blah\n");
-      // sht4x and sht3x has different protocol so when communication is
-      // impossible for 4x try 3x and then call it a day
-
-      // setupSHT4X();
-      // setupSHT3X();
-      // setupSHTC3();
-      // i2c_scan(i2c_scan_callback);
-       Delay_Ms(2000);
-    }
-  }
-
-  // Mux is using channels from 2..5
-  // 5 -> 1st bank
-  // 4 -> 2nd bank
-  // 3 -> 3rd bank
-  // 2 -> 4th bank
-  // PC4 is reset pin
 
 #if 0
 
@@ -1064,7 +984,6 @@ int main()
   }
 #endif
 
-  // tca9548a_init(&tca9548a);
 
   /* safety, if someone will call deepsleep */
   Delay_Ms(2000);
@@ -1080,9 +999,12 @@ int main()
 static void bank_fetch(uint8_t bank_id)
 {
   bank_t *bank = &banks[bank_id];
+
+  DPRINTF("Check bank: %d\n", bank_id);
+
   if (bank_check_new(bank))
   {
-
+    DPRINTF("bank %d check failed\n", bank_id);
   }
 
   int32_t temp;
@@ -1091,7 +1013,7 @@ static void bank_fetch(uint8_t bank_id)
 
   if (bank_active_count(bank) == 0)
   {
-    DPRINTF("Bank %d without sensors\n", bank_id);
+    DPRINTF("bank %d without sensors\n", bank_id);
 
     return;
   }
@@ -1109,6 +1031,7 @@ static void bank_fetch(uint8_t bank_id)
     obtain_t result = sensor->sensor->obtain(sensor->sensor, &temp, &pres, &hum);
     if (result == OBTAIN_ERROR)
     {
+      DPRINTF("bank %d sensor: %s: error reading data\n", bank_id, sensor_to_str(sensor->type));
       find_sensor(sensor->type)->factory->destroy(sensor->sensor, &bank->arena);
 
       sensor->type = SENSOR_NONE;
@@ -1117,16 +1040,19 @@ static void bank_fetch(uint8_t bank_id)
 
     if (result & OBTAIN_HUMIDITY)
     {
+      DPRINTF("bank %d sensor: %s: store humidity: %hu (fpt)\n", bank_id, sensor_to_str(sensor->type) , hum);
       packet_put_reading(&packet, bank_id, i, OBTAIN_HUMIDITY, hum);
     }
 
     if (result & OBTAIN_PRESSURE)
     {
+      DPRINTF("bank %d sensor: %s: store pressure: %hu (fpt)\n", bank_id, sensor_to_str(sensor->type), pres);
       packet_put_reading(&packet, bank_id, i, OBTAIN_PRESSURE, pres);
     }
 
     if (result & OBTAIN_TEMPERATURE)
     {
+      DPRINTF("bank %d sensor: %s: store temperature: %ld (fpt)\n", bank_id, sensor_to_str(sensor->type), temp);
       packet_put_reading(&packet, bank_id, i, OBTAIN_TEMPERATURE, temp);
     }
 
@@ -1139,16 +1065,34 @@ static void bank_fetch(uint8_t bank_id)
   }
 }
 
+void acquire_pt100()
+{
+  if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
+  {
+    packet_put_reading(&packet, PACKET_BANK_PT100, 0, OBTAIN_TEMPERATURE, tmp_raw_temperature16);
+    printf("pt100 reading ok: %d (raw)\n", tmp_raw_temperature16);
+  }
+  else
+  {
+    if (max31865.inited)
+    {
+      DPRINTF("pt100 reading fault, deinit\n");
+      max31865_deinit(&max31865);
+    }
+    else
+    {
+      DPRINTF("no pt100 sensor\n");
+    }
+  }
+}
+
 void loop()
 {
   DPRINTF("LOOP\n");
 
   packet_clear_readings(&packet);
 
-  if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
-  {
-    packet_put_reading(&packet, PACKET_BANK_PT100, 0, OBTAIN_TEMPERATURE, tmp_raw_humidity16);
-  }
+  acquire_pt100();
 
   for (int b = 0; b < BANKS_COUNT; ++b)
   {
@@ -1165,13 +1109,13 @@ void loop()
       goto end;
     }
 
-    DPRINTF("Packet size: %d\n", packet_size);
+    DPRINTF("packet size: %d\n", packet_size);
   }
   else
   {
-    DPRINTF("No sensors stored in packet\n");
+    DPRINTF("no sensors stored in packet\n");
   }
 
   end:
-  Delay_Ms(2000);
+  Delay_Ms(30000);
 }
