@@ -1,6 +1,7 @@
 #ifndef W_SPI_H
 #define W_SPI_H
 
+
 #include <ch32fun.h>
 
 #ifndef CH32V003
@@ -15,10 +16,9 @@
 #endif
 
 #include <ch32v003_GPIO_branchless.h>
-#include <ch32v003_SPI.h>
+
 #include <stdint.h>
 #include <stdbool.h>
-/* #include <stdio.h> */
 
 /**
  * All methods return conforms to standard C rules where 0 means OK
