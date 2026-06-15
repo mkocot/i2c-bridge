@@ -8,6 +8,8 @@
 #define BMP280_ADDRESS (BMP280_ADDRESS_ADO_HIGH >> 1)
 #define BME280_ADDRESS (BME280_ADDRESS_ADO_HIGH >> 1)
 
+#define TRACE_X(FMT, ARGS...) printf(FMT, ##ARGS)
+#define TRACE(FMT, Z...) TRACE_X("[%s:%04d]" ## FMT "\n", __FUNCTION__, __LINE__, ##Z)
 
 static inline uint8_t bmp280_iic_init()
 {
@@ -56,25 +58,47 @@ static uint8_t sensor_bmp280_probe(any_sensor_t *ctx)
   return 0;
 }
 
-static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, int32_t *out_t, uint16_t *out_p, uint16_t *out_h)
+static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, temperature_t *out_t, pressure_t *out_p, humidity_t *out_h)
 {
+  (void)out_h;
+
+  TRACE();
   bmp280_handle_t *bmp280 = (bmp280_handle_t*)ctx->sensor;
+  TRACE();
   if (bmp280 == NULL)
   {
+  TRACE();
     return OBTAIN_ERROR;
   }
 
   bmp280_temperature_t t;
   bmp280_pressure_t p;
+  TRACE();
   if (bmp280_read_temperature_pressure(bmp280, &tmp_raw_temperature, &t, &tmp_raw_pressure, &p))
   {
+  TRACE();
     return OBTAIN_ERROR;
   }
+  TRACE();
 #if 1
-  *out_t = QUANTIZE_TEMP(t);
-  *out_p = QUANTIZE_PRESSURE(p);
+	#ifdef DRIVER_BMP280_WITH_INT
+    printf("T=%ld\n", t);
+    printf("P=%lu\n", p);
+  #else
+    *out_t = fl2fpt(t);
+    *out_p = fl2fpt_q17(p);
+
+    // *out_t = fl2fpt(t);
+    // *out_p = fl2fpt(p);
+
+    // printf("T=" PR_FPT " %s %lx\n", F2PRINTF(t), fpt_cstr(*out_t, -1), *out_t);
+    // printf("P=" PR_FPT "\n", F2PRINTF(p));
   #endif
 
+  TRACE();
+  #endif
+
+  TRACE();
   return OBTAIN_TP;
 }
 
@@ -82,27 +106,40 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, int32_t *out_t, uint16_t
 static inline any_sensor_t *sensor_factory_bmp280_new(arena_t *arena)
 {
   // TODO: allocate!!
+  TRACE();
   any_sensor_t *sensor_bmp280 = (any_sensor_t*)arena_alloc(arena, sizeof(any_sensor_t));
+  TRACE();
   if (sensor_bmp280 == NULL)
   {
+  TRACE();
     return NULL;
   }
 
+  TRACE();
   sensor_bmp280->obtain = sensor_bmp280_obtain;
+  TRACE();
   sensor_bmp280->probe = sensor_bmp280_probe;
+  TRACE();
 
 
   bmp280_handle_t *bmp280 = (bmp280_handle_t*)arena_alloc(arena, sizeof(bmp280_handle_t));
+  TRACE();
   if (bmp280 == NULL)
   {
+  TRACE();
     return NULL;
   }
 
+  TRACE();
   DRIVER_SET_DEFAULT_IIC_ADDR(BMP280, bmp280, bmp280_handle_t);
+  TRACE();
   bmp280_set_interface(bmp280, BMP280_INTERFACE_IIC);
+  TRACE();
   bmp280_set_addr_pin(bmp280, BMP280_ADDRESS_ADO_HIGH);
+  TRACE();
 
   sensor_bmp280->sensor = bmp280;
+  TRACE();
 
   return sensor_bmp280;
 }

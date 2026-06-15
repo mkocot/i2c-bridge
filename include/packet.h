@@ -66,16 +66,16 @@ typedef struct {
   /* pressure */
   reading_config_t pressure_config;
   used_banks_t pressure_used_banks;
-  int16_t pressures[8]; /* linear scale */
+  uint16_t pressures[8]; /* linear scale */
 
   /* humidity */
   reading_config_t humidity_config;
   used_banks_t humidity_used_banks;
-  int8_t humiditys[8]; /* linear scale */
+  uint8_t humiditys[8]; /* linear scale */
 
 } packet_t;
 
-static void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sensor, uint16_t value);
+static void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sensor, fpt value);
 static void packet_clear_readings(packet_t *packet);
 
 static inline void packet_set_used_bank(packet_t *packet, obtain_t sensor, uint8_t index, uint8_t bank)
@@ -103,39 +103,45 @@ static inline void packet_set_used_bank(packet_t *packet, obtain_t sensor, uint8
   *ptr |= (0b11 & bank) << (2 * index);
 }
 
-void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sensor, uint16_t value)
+void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sensor, fpt value)
 {
-  used_banks_t *used_banks;
   reading_config_t *config;
+  uint16_t packed;
+
+  printf("put reading: %lx %s\n", value, fpt_cstr(value, -1));
 
   if (sensor == OBTAIN_TEMPERATURE)
   {
+    packed = (uint16_t) QUANTIZE_TEMP(value);
+    printf("temp packed: %x\n", packed);
+
     if (bank == PACKET_BANK_PT100) /* handle PT100 */
     {
       packet->temperature_config.has_pt100 = 1;
-      packet->temperature_pt100 = value;
+      packet->temperature_pt100 = packed;
 
       return;
     }
 
-    used_banks = &packet->temperature_used_banks;
     config = &packet->temperature_config.base_config;
 
-    packet->temperatures[config->count] = value;
+    packet->temperatures[config->count] = packed;
   }
   else if (sensor == OBTAIN_PRESSURE)
   {
-    used_banks = &packet->pressure_used_banks;
     config = &packet->pressure_config;
 
-    packet->pressures[config->count] = value;
+    packed = (uint16_t) QUANTIZE_PRESSURE(value);
+    printf("pressure packed: %x\n", packed);
+    packet->pressures[config->count] = packed;
   }
   else if (sensor == OBTAIN_HUMIDITY)
   {
-    used_banks = &packet->humidity_used_banks;
     config = &packet->humidity_config;
 
-    packet->humiditys[config->count] = (uint8_t)value;
+    packed = (uint16_t) QUANTIZE_HUM(value);
+    printf("humidity packed: %x\n", (uint8_t)packed);
+    packet->humiditys[config->count] = (uint8_t) packed;
   }
   else
   {

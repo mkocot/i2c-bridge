@@ -1,14 +1,19 @@
 #include "common_driver.h"
 
+#include "funconfig.h"
 #include <lib_i2c.h>
+
+#define W_I2C_SCALED_CYCLES(CYCLES) \
+  ((CYCLES) / W_TICK_RATIO)
 
 /* i2c default configuration */
 i2c_device_t i2c = {
-    .clkr = I2C_CLK_400KHZ, /* "default" */
+    .clkr = I2C_CLK_100KHZ, /* "default" */
     .type = I2C_ADDR_7BIT,  /* common addr type */
     .addr = 0x00,           /* device addres */
     .regb = 1,              /* register bytes, most devices uses 1 byte for register */
-    .tout = 2000            /* cycles ?*/
+    /* TODO(m): When device is lagging over MUX, mux will sort of */
+    .tout = W_I2C_SCALED_CYCLES(20000) /* cycles, scaled to current CLK*/
 };
 
 /* spi default configuration */

@@ -44,7 +44,7 @@ static uint8_t sensor_aht30_probe(any_sensor_t *ctx)
 }
 
 
-static obtain_t sensor_aht30_obtain(any_sensor_t *ctx, int32_t *temperature, uint16_t *pressure, uint16_t *humidity)
+static obtain_t sensor_aht30_obtain(any_sensor_t *ctx, temperature_t *temperature, pressure_t *pressure, humidity_t *humidity)
 {
   ((void)ctx);
 
@@ -57,8 +57,8 @@ static obtain_t sensor_aht30_obtain(any_sensor_t *ctx, int32_t *temperature, uin
     return OBTAIN_ERROR;
   }
 
-  *temperature = QUANTIZE_TEMP(ahtxx_t_fpt(tmp_raw_temperature));
-  *humidity = QUANTIZE_HUM(athxx_h_fpt(tmp_raw_humidity));
+  *temperature = ahtxx_t_fpt(tmp_raw_temperature);
+  *humidity = athxx_h_fpt(tmp_raw_humidity);
 
   return OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY;
 }

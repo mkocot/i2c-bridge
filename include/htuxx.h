@@ -52,7 +52,7 @@ static inline float htu21d_h_fpt(uint16_t val) {
     return as_fpt;
 }
 
-static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
+static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, temperature_t *t, pressure_t *p, humidity_t *h)
 {
     i2c.addr = DRIVER_HTU21D_ADDRESS;
     htu21d.inited = 1;
@@ -62,13 +62,13 @@ static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
         return OBTAIN_ERROR;
     }
 
-    *t = QUANTIZE_TEMP(htu21d_t_fpt(tmp_temperature));
-    *h = QUANTIZE_HUM(htu21d_h_fpt(tmp_humidity_f));
+    *t = htu21d_t_fpt(tmp_temperature);
+    *h = htu21d_h_fpt(tmp_humidity_f);
 
     return OBTAIN_TH;
 }
 
-static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
+static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, temperature_t *t, pressure_t *p, humidity_t *h)
 {
     htu31d.inited = 1;
 
@@ -81,13 +81,13 @@ static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p,
         return OBTAIN_ERROR;
     }
 
-    // *t = QUANTIZE_TEMP(tmp_raw_temperature16);
-    // *h = QUANTIZE_HUM(tmp_raw_humidity16);
-    *t = QUANTIZE_TEMP(htu31d_t_fpt(tmp_raw_humidity16));
-    *h = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+    // *t = tmp_raw_temperature16;
+    // *h = tmp_raw_humidity16;
+    *t = htu31d_t_fpt(tmp_raw_temperature16);
+    *h = raw_hum_to_fpt(tmp_raw_humidity16);
 
-    // *t = QUANTIZE_TEMP(tmp_temperature);
-    // *h = QUANTIZE_HUM(tmp_humidity_f);
+    // *t = tmp_temperature;
+    // *h = tmp_humidity_f;
 
     // int full_degrees = (int)tmp_temperature;
     // int decimals = ((int)(tmp_temperature * 100)) & 100;
@@ -105,19 +105,25 @@ static uint8_t sensor_htu21d_probe(any_sensor_t *ctx)
         What is "better"
         Reset inited to 0 and then set to 1 in "obtain" or restore state?
     */
-    i2c.addr = DRIVER_HTU21D_ADDRESS;
+    // i2c.addr = DRIVER_HTU21D_ADDRESS;
 
     htu21d.inited = 0;
 
-    DO_OR(htu21d_init(&htu21d));
+    int ret = htu21d_init(&htu21d);
+    if (ret)
+    {
+        return ret;
+    }
+
     /* TODO: check difference, repetivity and reliability */
     DO_OR(htu21d_set_mode(&htu21d, HTU21D_MODE_HOLD_MASTER));
+    // DO_OR(htu21d_set_mode(&htu21d, HTU21D_MODE_NO_HOLD_MASTER));
 
     /* quick check if connection is OK */
     DO_OR(htu21d_get_serial_number(&htu21d, &serial));
 
     /* default values */
-    #if 0
+    #if 1
     DO_OR(htu21d_set_heater(&htu21d, HTU21D_BOOL_FALSE));
     DO_OR(htu21d_set_resolution(&htu21d, HTU21D_RESOLUTION_TEMP_14_BITS_RH_12_BITS));
     DO_OR(htu21d_set_disable_otp_reload(&htu21d, HTU21D_BOOL_TRUE));
@@ -133,7 +139,13 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
 
     htu31d.inited = 0;
 
-    DO_OR(htu31d_init(&htu31d));
+    printf("HTU31d: %d\n", __LINE__);
+    int err = htu31d_init(&htu31d);
+    if (err)
+    {
+        printf("HTU31d: %d err=%d\n", __LINE__, err);
+        return err;
+    }
     /* it's default ON or OFF ?!*/
     DO_OR(htu31d_set_heater_off(&htu31d));
     /* TODO: get_humidity_osr and compare */
@@ -161,12 +173,68 @@ static any_sensor_t sensor_htu31d = SENSOR_INIT(
     sensor_htu31d_obtain
 );
 
+static uint16_t reg_value = 0;
+static uint8_t reg_len = 0;
+
+static uint8_t i2c_w_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
+{
+    reg_len = 0;
+
+    if (len > 2 || len == 0) {
+        printf("register > 2 bytes or empty");
+        return 1;
+    }
+    
+    if (len == 1) {
+        reg_value = buf[0];
+        reg_len = 1;
+    } else {
+        reg_value = (buf[0] << 8) | buf[1];
+        reg_len = 2;
+    }
+
+    // FA0F
+    printf("HTU21D: prepare register=%04X length=%d\n", reg_value, reg_len);
+
+    return 0;
+}
+
+static uint8_t i2c_r_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
+{
+    if (reg_len == 0)
+    {
+        printf("no register is known for read cmd\n");
+        return 1;
+    }
+
+    printf("HTU accessing register: %04X for %d\n", reg_value, len);
+
+    if (reg_len) {
+        return libdriver_iic_addr16_read(addr, reg_value, buf, len);
+    }
+    printf("HTU: r=%02d\n", (uint8_t)reg_value);
+    return libdriver_iic_addr_read_delay(addr, reg_value, buf, len, 20);
+    // return libdriver_iic_addr_read(addr, reg_value, buf, len);
+
+}
+
+static uint8_t htu_read_with_scl(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
+{
+    printf("HTU: a=%02X r=%02X l=%d\n", addr, reg, len);
+    return libdriver_iic_addr_read_delay(addr, reg, buf, len, 20);
+}
+
 static any_sensor_t* sensor_htu21d_new(arena_t *arena)
 {
     if (sensor_htu21d.sensor == NULL)
     {
         DRIVER_SET_DEFAULT_IIC(HTU21D, &htu21d, htu21d_handle_t);
-        DRIVER_HTU21D_LINK_IIC_READ_WITH_SCL(&htu21d, libdriver_iic_addr_read);
+        DRIVER_HTU21D_LINK_IIC_READ_WITH_SCL(&htu21d, htu_read_with_scl);
+        DRIVER_HTU21D_LINK_IIC_READ(&htu21d, libdriver_iic_addr_read);
+        DRIVER_HTU21D_LINK_IIC_WRITE(&htu21d, libdriver_iic_addr_write);
+
+        DRIVER_HTU21D_LINK_IIC_WRITE_CMD(&htu21d, i2c_w_cmd);
+        DRIVER_HTU21D_LINK_IIC_READ_CMD(&htu21d, i2c_r_cmd);
 
         sensor_htu21d.sensor = &htu21d;
     }

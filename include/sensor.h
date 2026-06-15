@@ -5,6 +5,37 @@
 #include <stdint.h>
 #include <fptc.h>
 
+#define PR_FPT "%d.%02d"
+#define F2PRINTF(F) ((int)F), (int)((F - (int)F) * 100)
+
+static void print_float(float f) {
+  int int_part = (int)f;
+  int frac_part = (int)((f - int_part) * 100);  // 2 decimal places
+  printf("%d.%02d", int_part, frac_part);
+}
+
+typedef fpt temperature_t;
+typedef fpt humidity_t;
+typedef fpt pressure_t;
+
+#define PR_FPT "%d.%02d"
+
+static void print_fpt(fpt v)
+{
+  int int_part = fpt2i(v);
+  int frac_part = fpt2i(fpt_mul(fpt_sub(v, i2fpt(int_part)), i2fpt(100)));
+  printf(PR_FPT, int_part, frac_part);
+}
+
+#define PR_TEMP PR_FPT
+#define print_temperature(t) print_fpt(t)
+
+#define PR_HUM PR_FPT
+#define print_humidity(t) print_fpt(t)
+
+#define PR_PR PR_FPT
+#define print_pressure(t) print_fpt(t)
+
 // union any_sensor_u {
 //   aht30_handle_t aht;
 //   bmp280_handle_t bmp280;
@@ -17,6 +48,7 @@ struct arena_s {
     void *now;
 };
 
+#define ARENA_INIT(POOL, SIZE) {(POOL), (POOL) + (SIZE), (POOL)}
 
 inline static uint8_t arena_init(arena_t *arena, void *pool, size_t size);
 
@@ -38,6 +70,7 @@ void* arena_alloc(arena_t *arena, size_t size)
 {
   if (arena->now + size >= arena->end)
   {
+    // printf("%u %d %u\n", (unsigned int)arena->now, size, (unsigned int)arena->end);
     return NULL;
   }
 
@@ -87,9 +120,9 @@ struct any_sensor_s {
 
   */
   obtain_t (*obtain)(any_sensor_t *ctx,
-    int32_t *temperature,
-    uint16_t *pressure,
-    uint16_t *humidity
+    temperature_t *temperature,
+    pressure_t *pressure,
+    humidity_t *humidity
   );
 };
 
@@ -145,10 +178,25 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define TQ_MIN i2fpt(T_MIN)
 #define TQ_MAX i2fpt(T_MAX)
 
-#define P_MIN 300
-#define P_MAX 110000
-#define PQ_MIN i2fpt(P_MIN)
-#define PQ_MAX i2fpt(P_MAX)
+/* bmp280 accuracy is ~ 1hPa */
+#define P_MIN         (88000) /* 882 hPa was record low in hurricane */
+#define P_MAX         (110000) /* 1100 hPa bmp280 max pressure */
+
+/* pressure is Q17.14 (sign, 17, 14)*/
+#define P_R           (FPT_FBITS - 2) /* radix */
+#define P_FBITS       (P_R)
+#define P_WBITS       (FPT_WBITS + 2)
+#define FPT_ONEx(r)   ((fpt)((fpt)1 << r))
+#define fl2fptx(F, r) ((fpt)((F) * FPT_ONEx(r) + ((F) >= 0 ? 0.5 : -0.5)))
+#define fpt2flx(T, r) ((float) ((T)*((float)(1)/(float)(1 << (r)))))
+
+#define i2fpt_q17(v)  (i2fpt_norm((v), 2)) /* 2 bits more for integer */
+#define fl2fpt_q17(F) (fl2fptx((F), P_R))
+#define fpt2fl_q17(T) (fpt2flx(T, P_R))
+
+/* finally define min and max value */
+#define PQ_MIN        (i2fpt_q17(P_MIN))
+#define PQ_MAX        (i2fpt_q17(P_MAX))
 
 #define H_MIN 0
 #define H_MAX 100
@@ -185,51 +233,20 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 //     return fpt2fl(as_fpt);
 // }
 
-/* 24bits: -40 .. 85 */
+/* 16bits: -40 .. 85 */
 #define QUANTIZE_TEMP(V) \
-  QUANTIZE_Q(TQ_MIN, TQ_MAX, 3, int32_t, V)
+  QUANTIZE_Q(TQ_MIN, TQ_MAX, 2, int16_t, V)
 
-/* 16bits: 300 .. 110000*/
+#define DEQUANTIZE_TEMP(V) \
+  DEQUANTIZE_Q(TQ_MIN, TQ_MAX, 2, V)
+
+/* 16bits: 88000 .. 110000 */
 #define QUANTIZE_PRESSURE(V) \
   QUANTIZE_Q(PQ_MIN, PQ_MAX, 2, uint16_t, V)
 
 
-#define DEQUANTIZE_TEMP(V) \
-  DEQUANTIZE_Q(T_MIN, T_MAX, 3, V)
-
 #define DEQUANTIZE_PRESSURE(V) \
-  DEQUANTIZE_Q(P_MIN, P_MAX, 2, V)
-
-/* convert raw 16bit (range: 0..100) humidity value to FPT */
-static inline fpt raw_hum_to_fpt(uint16_t hum)
-{
-  return fpt_mul(hum, i2fpt(100));
-}
-
-static inline int32_t convert_temp(float t)
-{
-  return QUANTIZE_TEMP(t);
-}
-
-static inline uint16_t convert_pressure(float p)
-{
-  return QUANTIZE_PRESSURE(p);
-}
-
-// static inline uint8_t convert_hum(float p)
-// {
-//   return QUANTIZE_HUM(p);
-// }
-
-static inline float decode_temp(int32_t t)
-{
-  return DEQUANTIZE_TEMP(t);
-}
-
-static inline float decode_pressure(uint16_t p)
-{
-  return DEQUANTIZE_PRESSURE(p);
-}
+  DEQUANTIZE_Q(PQ_MIN, PQ_MAX, 2, V)
 
 
 static inline uint8_t quant_h(fpt val) {
@@ -251,9 +268,7 @@ static inline uint8_t quant_h(fpt val) {
 }
 
 /* 8bits: 0 .. 100*/
-#define QUANTIZE_HUM(V) \
-  quant_h(V)
-//   QUANTIZE_Q(HQ_MIN, HQ_MAX, 1, uint8_t, V)
+#define QUANTIZE_HUM(V) quant_h(V)
 
 static inline float dequant_h(uint8_t val) {
     fpt as_fpt = val;
@@ -264,8 +279,28 @@ static inline float dequant_h(uint8_t val) {
     return fpt2fl(as_fpt);
 }
 
-#define DEQUANTIZE_HUM(V) \
-  dequant_h(V)
-//   DEQUANTIZE_Q(H_MIN, H_MAX, 1, V)
+#define DEQUANTIZE_HUM(V) dequant_h(V)
+
+/* convert raw 16bit (range: 0..100) humidity value to FPT */
+#define raw_hum_to_fpt(hum) fpt_mul(hum, i2fpt(100))
+
+#define convert_temp(t) QUANTIZE_TEMP(t)
+
+#define convert_pressure(p) QUANTIZE_PRESSURE(p)
+
+// static inline uint8_t convert_hum(float p)
+// {
+//   return QUANTIZE_HUM(p);
+// }
+
+static inline float decode_temp(int32_t t)
+{
+  return DEQUANTIZE_TEMP(t);
+}
+
+static inline float decode_pressure(uint16_t p)
+{
+  return DEQUANTIZE_PRESSURE(p);
+}
 
 #endif

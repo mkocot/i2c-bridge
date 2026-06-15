@@ -55,7 +55,7 @@ static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
         return 1;
     }
 
-    // printf("Serial: %x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
+    printf("Serial: %x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
 
     DO_OR(hdc1080_set_heater(&hdc1080, HDC1080_BOOL_FALSE));
     DO_OR(hdc1080_set_mode(&hdc1080, HDC1080_MODE_SEQUENCE));
@@ -65,19 +65,21 @@ static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
     return 0;
 }
 
-static obtain_t sensor_hdc1080_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
+static obtain_t sensor_hdc1080_obtain(any_sensor_t *ctx, temperature_t *t, pressure_t *p, humidity_t *h)
 {
+    int err = 0 ;
     hdc1080.inited = 1;
 
     i2c.addr = DRIVER_HDC1080_ADDRESS;
 
-    if (hdc1080_read_temperature_humidity(&hdc1080, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
+    if (( err = hdc1080_read_temperature_humidity(&hdc1080, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL)) != 0)
     {
+        printf("%s: %d\n", __FUNCTION__, err);
         return OBTAIN_ERROR;
     }
 #if 1
-    *t = QUANTIZE_TEMP(hdc1080_t_fpt(tmp_raw_temperature16));
-    *h = QUANTIZE_HUM(raw_hum_to_fpt(tmp_raw_humidity16));
+    *t = hdc1080_t_fpt(tmp_raw_temperature16);
+    *h = raw_hum_to_fpt(tmp_raw_humidity16);
 #endif
 
     return OBTAIN_TH;
@@ -87,17 +89,21 @@ static any_sensor_t sensor_hdc1080 = SENSOR_INIT(sensor_hdc1080_probe, sensor_hd
 
 static uint8_t sensor_hdc1080_iic_read_with_wait(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
+    /* 
+     *  NOTE(m): Delay can be lower when CLK is running lower.
+     *  It might be related to some kind of rounding error.
+     */
     uint8_t delay = 0;
     if (reg == 0x00) /* temperature */
     {
         switch(TEMP_RESOLUTION)
         {
             case HDC1080_TEMPERATURE_RESOLUTION_11_BIT:
-                delay = 1; //5;
+                delay = 5;
                 break;
             case HDC1080_TEMPERATURE_RESOLUTION_14_BIT:
             default:
-                delay = 2; //7;
+                delay = 14;
                 break;
         }
     }
@@ -106,15 +112,15 @@ static uint8_t sensor_hdc1080_iic_read_with_wait(uint8_t addr, uint8_t reg, uint
         switch(HUMI_RESOLUTION)
         {
             case HDC1080_HUMIDITY_RESOLUTION_8_BIT:
-                delay = 1;
+                delay = 3;
                 break;
             case HDC1080_HUMIDITY_RESOLUTION_11_BIT:
-                delay = 1;
+                delay = 4;
                 break;
             case HDC1080_HUMIDITY_RESOLUTION_14_BIT:
             /* fallthrough */
             default:
-                delay = 1;
+                delay = 7;
                 break;
         }
     }

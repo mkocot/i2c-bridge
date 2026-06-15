@@ -57,7 +57,7 @@ static inline void libdriver_delay_ms(uint32_t delay) { Delay_Ms(delay); }
 
 static void debug_print(const char *const fmt, ...)
 {
-  printf(fmt);
+  printf("%s", fmt);
 }
 
 
@@ -109,5 +109,32 @@ static inline uint8_t libdriver_nop_void(void) { return 0; }
 
 uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
 uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
+
+static uint8_t i2c_send_stop(i2c_device_t *i2c, bool enable)
+{
+  if (enable) {
+    I2C1->CTLR1 |= CTLR1_STOP_Set;
+  } else {
+    I2C1->CTLR1 &= CTLR1_STOP_Reset;
+  }
+}
+
+static uint8_t i2c_send_start(i2c_device_t *i2c, bool enable)
+{
+  if (enable) {
+    I2C1->CTLR1 |= CTLR1_START_Set;
+  } else {
+    I2C1->CTLR1 &= CTLR1_START_Reset;
+  }
+}
+
+static uint8_t i2c_clock_stretch(i2c_device_t *i2c, bool enable)
+{
+  if (enable) {
+    I2C1->CTLR1 |= CTLR1_NOSTRETCH_Set;
+  } else {
+    I2C1->CTLR1 &= CTLR1_NOSTRETCH_Reset;
+  }
+}
 
 #endif

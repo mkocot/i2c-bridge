@@ -26,14 +26,14 @@ static uint8_t sensor_mcp9808_probe(any_sensor_t *ctx)
     return 0;
 }
 
-static obtain_t sensor_mcp9808_obtain(any_sensor_t *ctx, int32_t *t, uint16_t *p, uint16_t *h)
+static obtain_t sensor_mcp9808_obtain(any_sensor_t *ctx, temperature_t *t, pressure_t *p, humidity_t *h)
 {
     if (mcp9808_read(&mcp9808, &tmp_raw_temperaturei16, NULL))
     {
         return OBTAIN_ERROR;
     }
 
-    *t = QUANTIZE_TEMP(mcp9808_t_fpt(tmp_raw_temperaturei16));
+    *t = mcp9808_t_fpt(tmp_raw_temperaturei16);
 
     // printf("T: %d\n", (int)tmp_temperature);
 
