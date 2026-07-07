@@ -1,6 +1,7 @@
 #ifndef W_SENSOR_H
 #define W_SENSOR_H
 
+#include "arena.h"
 #include <memory.h>
 #include <stdint.h>
 #include <fptc.h>
@@ -40,77 +41,6 @@ static void print_fpt(fpt v)
 //   aht30_handle_t aht;
 //   bmp280_handle_t bmp280;
 // };
-
-typedef struct arena_s arena_t;
-struct arena_s {
-    const void *memory;
-    const void *end;
-    void *now;
-};
-
-#define ARENA_INIT(POOL, SIZE) {(POOL), (POOL) + (SIZE), (POOL)}
-
-inline static uint8_t arena_init(arena_t *arena, void *pool, size_t size);
-
-inline static void* arena_alloc(arena_t *arena, size_t size);
-
-inline static void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size);
-
-inline static uint8_t arena_clear(arena_t *arena);
-
-
-uint8_t arena_init(arena_t *arena, void *pool, size_t size)
-{
-  arena->memory = pool;
-  arena->end = pool + size;
-  arena->now = pool;
-
-  return 0;
-}
-
-void* arena_alloc(arena_t *arena, size_t size)
-{
-  if ((uintptr_t)arena->now + size > (uintptr_t)arena->end)
-  {
-    return NULL;
-  }
-
-  void* ptr = arena->now;
-  arena->now = (void*)((uintptr_t)arena->now + size);
-
-  return ptr;
-}
-
-void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size)
-{
-  /* alignment must be a power of 2 */
-  if (!alignment || (alignment & (alignment - 1)))
-  {
-    return NULL;
-  }
-
-  uintptr_t now = (uintptr_t)arena->now;
-  uintptr_t aligned_now = (now + alignment - 1) & ~(alignment - 1);
-
-  if (aligned_now + size > (uintptr_t)arena->end)
-  {
-    return NULL;
-  }
-
-  arena->now = (void*)aligned_now;
-  void* ptr = arena->now;
-  arena->now = (void*)(aligned_now + size);
-
-  return ptr;
-}
-
-uint8_t arena_clear(arena_t *arena)
-{
-  arena->now = (void*) arena->memory;
-
-  return 0;
-}
-
 
 struct any_sensor_s;
 typedef struct any_sensor_s any_sensor_t;
