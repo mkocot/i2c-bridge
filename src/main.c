@@ -1638,11 +1638,6 @@ static void bank_fetch(uint8_t bank_id)
 
     ++active;
   }
-
-  if (active == 0)
-  {
-    arena_clear(bank->arena);
-  }
 }
 
 void acquire_pt100()
