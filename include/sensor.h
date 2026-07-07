@@ -54,6 +54,8 @@ inline static uint8_t arena_init(arena_t *arena, void *pool, size_t size);
 
 inline static void* arena_alloc(arena_t *arena, size_t size);
 
+inline static void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size);
+
 inline static uint8_t arena_clear(arena_t *arena);
 
 
@@ -68,14 +70,36 @@ uint8_t arena_init(arena_t *arena, void *pool, size_t size)
 
 void* arena_alloc(arena_t *arena, size_t size)
 {
-  if (arena->now + size >= arena->end)
+  if ((uintptr_t)arena->now + size > (uintptr_t)arena->end)
   {
-    // printf("%u %d %u\n", (unsigned int)arena->now, size, (unsigned int)arena->end);
     return NULL;
   }
 
   void* ptr = arena->now;
-  arena->now += size;
+  arena->now = (void*)((uintptr_t)arena->now + size);
+
+  return ptr;
+}
+
+void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size)
+{
+  /* alignment must be a power of 2 */
+  if (!alignment || (alignment & (alignment - 1)))
+  {
+    return NULL;
+  }
+
+  uintptr_t now = (uintptr_t)arena->now;
+  uintptr_t aligned_now = (now + alignment - 1) & ~(alignment - 1);
+
+  if (aligned_now + size > (uintptr_t)arena->end)
+  {
+    return NULL;
+  }
+
+  arena->now = (void*)aligned_now;
+  void* ptr = arena->now;
+  arena->now = (void*)(aligned_now + size);
 
   return ptr;
 }
@@ -202,6 +226,7 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define H_MAX 100
 #define HQ_MIN i2fpt(H_MIN)
 #define HQ_MAX i2fpt(H_MAX)
+#define HQ_MAX2 i2fpt_norm(H_MAX, -8)
 
 
 #define QUANTIZE_Q(FROM, TO, BYTES, STORAGE, VALUE) \
@@ -248,6 +273,11 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define DEQUANTIZE_PRESSURE(V) \
   DEQUANTIZE_Q(PQ_MIN, PQ_MAX, 2, V)
 
+#define QUANTIZE_HUM2(V) \
+  QUANTIZE_Q(HQ_MIN, HQ_MAX2, 1, uint8_t, V)
+
+#define DEQUANTIZE_HUM2(V) \
+  DEQUANTIZE_Q(HQ_MIN, HQ_MAX2, 1, V)
 
 static inline uint8_t quant_h(fpt val) {
     if (val < HQ_MIN) {
@@ -268,7 +298,7 @@ static inline uint8_t quant_h(fpt val) {
 }
 
 /* 8bits: 0 .. 100*/
-#define QUANTIZE_HUM(V) quant_h(V)
+#define QUANTIZE_HUM(V) QUANTIZE_HUM2(V)
 
 static inline float dequant_h(uint8_t val) {
     fpt as_fpt = val;
@@ -279,7 +309,7 @@ static inline float dequant_h(uint8_t val) {
     return fpt2fl(as_fpt);
 }
 
-#define DEQUANTIZE_HUM(V) dequant_h(V)
+#define DEQUANTIZE_HUM(V) DEQUANTIZE_HUM2(V)
 
 /* convert raw 16bit (range: 0..100) humidity value to FPT */
 #define raw_hum_to_fpt(hum) fpt_mul(hum, i2fpt(100))

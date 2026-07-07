@@ -33,30 +33,11 @@ static hdc1080_handle_t hdc1080;
 
 static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
 {
-    uint8_t serial[6] = {0};
-
     hdc1080.inited = 0;
 
     i2c.addr = DRIVER_HDC1080_ADDRESS;
 
     DO_OR(hdc1080_init(&hdc1080));
-    DO_OR(hdc1080_get_serial_id(&hdc1080, serial));
-
-
-    int zeros = 0;
-    for (int i = 0; i < sizeof(serial) / sizeof(serial[0]); ++i)
-    {
-        zeros += serial[i] == 0;
-    }
-
-    if (zeros == sizeof(serial) / sizeof(serial[0]))
-    {
-        // printf("???\n");
-        return 1;
-    }
-
-    printf("Serial: %x%x%x%x%x%x\n", serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
-
     DO_OR(hdc1080_set_heater(&hdc1080, HDC1080_BOOL_FALSE));
     DO_OR(hdc1080_set_mode(&hdc1080, HDC1080_MODE_SEQUENCE));
     DO_OR(hdc1080_set_humidity_resolution(&hdc1080, HUMI_RESOLUTION));
@@ -74,7 +55,7 @@ static obtain_t sensor_hdc1080_obtain(any_sensor_t *ctx, temperature_t *t, press
 
     if (( err = hdc1080_read_temperature_humidity(&hdc1080, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL)) != 0)
     {
-        printf("%s: %d\n", __FUNCTION__, err);
+        TRACE("err = %d\n", err);
         return OBTAIN_ERROR;
     }
 #if 1

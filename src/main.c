@@ -2,6 +2,7 @@
 #include "bank.h"
 #include "bmp280.h"
 #include "common_driver.h"
+#include "debug.h"
 #include "hdc1080.h"
 #include "packet.h"
 #include "shtxx.h"
@@ -9,6 +10,7 @@
 #include "si7021.h"
 #include "htuxx.h"
 #include "mcp9808.h"
+#include "wtocol.h"
 
 #include <alloca.h>
 #include <stdio.h>
@@ -21,11 +23,6 @@
 /* for debug */
 #include <driver_bme280.h>
 
-#if FUNCONF_USE_DEBUGPRINTF
-#define DPRINTF(FMT, ARGS...) printf((FMT), ## ARGS)
-#else
-#define DPRINTF(FMT, ARGS...) ((void)0)
-#endif
 
 /* get maximum bytes required per struct */
 #if 0
@@ -53,8 +50,8 @@ const int max_struct = MS(MS(MS(MS(MS(MS(MS(MS(MS(MS(SS(aht20_handle_t, aht30_ha
 */
 
 typedef struct supported_sensor_e {
-  sensor_t sensor;
-  any_sensor_factory_t *factory;
+  const sensor_t sensor;
+  const any_sensor_factory_t *factory;
 } supported_sensor_t;
 
 /* NOTE: BMP280 can be mixed with AHT30 */
@@ -64,7 +61,10 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_BMP280, &sensor_factory_BMP280}, // crashing 003?
   {SENSOR_HDC1080, &sensor_factory_HDC1080},
   {SENSOR_HTU31D, &sensor_factory_HTU31D},
-  // {SENSOR_HTU21D, &sensor_factory_HTU21D}, // broken chip? unable to read temp
+#ifdef WITH_HTU21D
+  // broken chip sample? unable to read temp
+  {SENSOR_HTU21D, &sensor_factory_HTU21D},
+#endif
   {SENSOR_SI7021, &sensor_factory_SI7021},
   #ifdef CH32V006
   {SENSOR_SHT3X, &sensor_factory_SHT3X},
@@ -76,8 +76,11 @@ static supported_sensor_t supported_sensors[] = {
 
 #define supported_sensors_length (sizeof(supported_sensors) / sizeof(supported_sensors[0]))
 
-static uint8_t packet_pool[sizeof(packet_t)];
+static uint8_t packet_pool[sizeof(hc12_wire_t) + sizeof(packet_t)];
+static arena_t packet_arena = ARENA_INIT(packet_pool, sizeof(packet_pool));
+
 static uint8_t arena_pool[128];
+static arena_t sensor_arena = ARENA_INIT(arena_pool, sizeof(arena_pool));
 
 static packet_t packet;
 
@@ -95,10 +98,10 @@ static tca9548a_handle_t tca9548a = {0};
 #define BANKS_COUNT (4)
 
 bank_t banks[BANKS_COUNT] = {
-    {TCA9548A_CHANNEL_5, {{0, NULL}, {0, NULL}}, ARENA_INIT(arena_pool, sizeof(arena_pool))},
-    {TCA9548A_CHANNEL_4, {{0, NULL}, {0, NULL}}, ARENA_INIT(NULL, 0)},
-    {TCA9548A_CHANNEL_3, {{0, NULL}, {0, NULL}}, ARENA_INIT(NULL, 0)},
-    {TCA9548A_CHANNEL_2, {{0, NULL}, {0, NULL}}, ARENA_INIT(arena_pool, sizeof(arena_pool))},
+    {TCA9548A_CHANNEL_5, {{0, NULL}, {0, NULL}}, &sensor_arena},
+    {TCA9548A_CHANNEL_4, {{0, NULL}, {0, NULL}}, &sensor_arena},
+    {TCA9548A_CHANNEL_3, {{0, NULL}, {0, NULL}}, &sensor_arena},
+    {TCA9548A_CHANNEL_2, {{0, NULL}, {0, NULL}}, &sensor_arena},
 };
 
 static void loop();
@@ -594,33 +597,112 @@ void i2c_scan_callback(const uint8_t addr)
   printf("Address: 0x%02X Responded.\n", addr);
 }
 
-struct xxx_t
-{
-  uint8_t address;
-  uint8_t (*init)();
-  uint8_t (*deinit)();
-  uint8_t (*fetch)(int *, int *, int *);
-};
+static void dma_uart_tx(const void *data, size_t len);
+static void dma_uart_tx_wait(void);
 
-#define TCA9548A_RESET_PIN (GPIOv_from_PORT_PIN(GPIO_port_C, GPIO_PinSource4))
+#define TCA9548A_RESET_PIN  (PC4)
+#define HC12_SET_PIN        (PD6)
+
+/* 
+ * Enter passthrough mode, but do not skip recommended amount of time
+ */
+static void hc12_enter_passthrough_fast()
+{
+  GPIO_digitalWrite(HC12_SET_PIN, 1);
+}
+
+static void hc12_enter_passthrough()
+{
+  hc12_enter_passthrough_fast();
+  /* give it a while to settle */
+  Delay_Ms(80); /* test delay, value from manual */
+}
+
+static void hc12_enter_cmd()
+{
+  GPIO_digitalWrite(HC12_SET_PIN, 0);
+  Delay_Ms(40); /* test: value from manual */
+}
+
+static void hc12_wake_up()
+{
+  hc12_enter_cmd();
+  Delay_Ms(1); /* test */
+  hc12_enter_passthrough();
+}
+
+static void hc12_sleep()
+{
+  hc12_enter_cmd();
+
+  static const uint8_t sleep_cmd[] = "AT+SLEEP\n"; /* not sure it '\n' is required */
+  dma_uart_tx(sleep_cmd, sizeof(sleep_cmd) - 1); /* ignore '\0' */
+  dma_uart_tx_wait();
+
+  Delay_Ms(10); /* test: how long is enough */
+  hc12_enter_passthrough_fast();
+}
+
+static void hc12_send(uint8_t *data, size_t len)
+{
+  /* there is small problem with HC-12 where it's capable of sending 17 bytes
+    * at once and truncating everything above
+    */
+  size_t packet_chunks = len >> 4;
+  if ((packet_chunks >> 4) != len) {
+    packet_chunks++;
+  }
+
+  uint8_t *offset = packet_pool;
+  for (size_t i = 0; i < packet_chunks; ++i) {
+    dma_uart_tx(offset, MIN(16, len - (i << 4)));
+    DPRINTF("%06ld: packet dma request done\n", SysTick->CNT);
+    dma_uart_tx_wait();
+    DPRINTF("%06ld: wait done\n", SysTick->CNT);
+    offset += 16;
+    Delay_Ms(40);
+  }
+}
 
 static void initializeGPIO()
 {
   GPIO_port_enable(GPIO_port_C);
-  GPIO_pinMode(TCA9548A_RESET_PIN, GPIO_pinMode_O_openDrain, GPIO_Speed_2MHz);
 
-  // Default state for reset pin is HIGH or HI-Z
+  /* 2MHz is NOT working on 006 (no change on pin) */
+  GPIO_pinMode(TCA9548A_RESET_PIN, GPIO_pinMode_O_openDrain, GPIO_Speed_10MHz);
+  /* Default state for reset pin is HIGH or HI-Z */
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 1);
+
+  GPIO_port_enable(GPIO_port_C);
+  /* it can also be driven by openDrain */
+  // GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_pushPull, GPIO_Speed_10MHz);
+  GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_openDrain, GPIO_Speed_10MHz);
+  /* PULL-UP to ensure we are in pass-through mode */
+  hc12_enter_passthrough();
 }
 
-static void tca9548a_reset(tca9548a_handle_t *handle)
+static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
 {
   // pull down, and return to default mode for reset cycle
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 0);
-  Delay_Us(10);
+  // Delay_Us(10);
+  Delay_Ms(1);
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 1);
+  
+  printf("reset channels after reset: ");
+  while(tca9548a_channel_set(handle, TCA9548A_CHANNEL_NONE))
+  {
+    printf(".");
+    // i2c_send_stop(&i2c, true);
 
-  tca9548a_channel_set(handle, TCA9548A_CHANNEL_NONE);
+    Delay_Ms(100);
+    RCC->APB1PCENR &= ~RCC_APB1Periph_I2C1;
+    I2C1->CTLR1 &= ~I2C_CTLR1_PE;
+    i2c_init(&i2c);
+  }
+  printf("\n");
+
+  return 0;
 }
 
 
@@ -656,7 +738,7 @@ static uint8_t sensor_check(const supported_sensor_t *supported_sensor, uint8_t 
 
     if ((*sensor)->probe(*sensor) == 0)
     {
-      DPRINTF("Sensor created\n");
+      DPRINTF("Sensor detected: %s\n", sensor_to_str(supported_sensor->sensor));
       return 0;
     }
 
@@ -664,16 +746,16 @@ static uint8_t sensor_check(const supported_sensor_t *supported_sensor, uint8_t 
 
     if (supported_sensor->factory->destroy)
     {
-      DPRINTF("sensor destroy\n");
+      DPRINTF("sensor destroy: %s\n", sensor_to_str(supported_sensor->sensor));
       supported_sensor->factory->destroy(*sensor, arena);
     }
 
     return 1;
 }
 
-static supported_sensor_t *find_sensor(sensor_t type)
+static const supported_sensor_t *find_sensor(sensor_t type)
 {
-  for (int i = 0; i < supported_sensors_length; ++i)
+  for (size_t i = 0; i < supported_sensors_length; ++i)
   {
     if (supported_sensors[i].sensor == type)
     {
@@ -729,29 +811,42 @@ static uint8_t bank_check_new(bank_t *bank)
   }
 
 
-  for (int i = 0; i < supported_sensors_length; ++i)
+  for (size_t i = 0; i < supported_sensors_length; ++i)
   {
-    supported_sensor_t *supported_sensor = &supported_sensors[i];
+    supported_sensor_t *current_sensor = &supported_sensors[i];
 
-    if ((supported_sensor->sensor & sensors_to_check) == 0)
+    if ((current_sensor->sensor & sensors_to_check) == 0)
     {
-      DPRINTF("skip sensor: %s\n", sensor_to_str(supported_sensor->sensor));
+      DPRINTF("skip sensor: %s\n", sensor_to_str(current_sensor->sensor));
       /* sensor is not allowed to check, skip */
       continue;
     }
 
     any_sensor_t *sensor = NULL;
-    if (sensor_check(supported_sensor, &addr, &response, &bank->arena, &sensor))
+    if (sensor_check(current_sensor, &addr, &response, bank->arena, &sensor))
     {
-      // DPRINTF("not detected: %s\n", sensor_to_str(supported_sensor->sensor));
+      // DPRINTF("not detected: %s\n", sensor_to_str(current_sensor->sensor));
       /* sensor is not detected */
       continue;
     }
 
-    DPRINTF("found: %s\n", sensor_to_str(supported_sensor->sensor));
+    DPRINTF("found: %s\n", sensor_to_str(current_sensor->sensor));
 
-    bank->sensors[sensor_id].type = supported_sensor->sensor;
+    bank->sensors[sensor_id].type = current_sensor->sensor;
     bank->sensors[sensor_id++].sensor = sensor;
+
+    /* drop any sensors that share I2C address */
+    printf("check remaining sensors\n");
+
+    for (size_t j = i + 1; j < supported_sensors_length; ++j)
+    {
+      const supported_sensor_t *check = &supported_sensors[j];
+      if ((sensors_to_check & check->sensor) && check->factory->address == addr)
+      {
+        DPRINTF("Disable: %s (share addr)\n", sensor_to_str(check->sensor));
+        sensors_to_check &= ~check->sensor;
+      }
+    }
 
     /* sensor_id here is 1, 2, ... */
     if (sensor_id > BANK_MAX_SENSORS)
@@ -902,7 +997,8 @@ void uart_fun()
 
 
 // Set UART baud rate here
-#define UART_BR 115200
+// #define UART_BR 115200
+#define UART_BR 9600
 
 // DMA transfer completion interrupt. It will fire when the DMA transfer is
 // complete. We use it just to blink the LED
@@ -926,9 +1022,14 @@ void uart_fun()
 // 	// LED ON
 // 	GPIOD->BSHR = 1<<LED_PIN;
 // }
-#define USART_MODE USART_
+#define UART_SIMPLEX (1)
+#define UART_DUPLEX (2)
+
+#define USART_MODE UART_SIMPLEX
+
 static void uart_setup(void)
 {
+#if USART_MODE == UART_DUPLEX
   // TODO: test half duplex?
 	// Enable UART and GPIOD
 	RCC->APB2PCENR |= RCC_APB2Periph_GPIOD | RCC_APB2Periph_USART1;
@@ -951,6 +1052,22 @@ static void uart_setup(void)
 	// Set baud rate and enable UART
 	USART1->BRR = ((FUNCONF_SYSTEM_CORE_CLOCK) + (UART_BR)/2) / (UART_BR);
 	USART1->CTLR1 |= CTLR1_UE_Set;
+#else
+  // TODO: test half duplex?
+	// Enable UART and GPIOD
+	RCC->APB2PCENR |= RCC_APB2Periph_GPIOD | RCC_APB2Periph_USART1;
+  funPinMode(PD5, GPIO_CNF_OUT_PP_AF | GPIO_Speed_10MHz);
+
+	// Setup UART for Tx 8n1
+	USART1->CTLR1 = USART_WordLength_8b | USART_Parity_No | USART_Mode_Tx;
+	USART1->CTLR2 = USART_StopBits_1;
+	// Enable Tx DMA event
+	USART1->CTLR3 = USART_DMAReq_Tx;
+
+	// Set baud rate and enable UART
+	USART1->BRR = ((FUNCONF_SYSTEM_CORE_CLOCK) + (UART_BR)/2) / (UART_BR);
+	USART1->CTLR1 |= CTLR1_UE_Set;
+#endif
 }
 
 static void dma_uart_setup(void)
@@ -989,10 +1106,13 @@ static void dma_uart_setup(void)
 	// NVIC_EnableIRQ(DMA1_Channel4_IRQn);
 }
 
-static void process_cmd(const char *cmd)
+static void process_cmd(const uint8_t *cmd)
 {
   printf("CMD: %s\n", cmd);
+  dma_uart_tx("hi\r\n", 4);
+  dma_uart_tx_wait();
 }
+
 
 static void dma_uart_rx()
 {
@@ -1045,15 +1165,34 @@ static void dma_uart_rx()
 	}
   DMA1_Channel5->CFGR &= ~DMA_CFGR1_EN;
 }
-static void dma_uart_tx(const void *data, uint32_t len)
+
+static void dma_uart_tx(const void *data, size_t len)
 {
 	// Disable DMA channel (just in case a transfer is pending)
 	DMA1_Channel4->CFGR &= ~DMA_CFGR1_EN;
+
+  // Debug purpose only
+  int loops = 0;
+  while(DMA1_Channel4->CFGR & DMA_CFGR1_EN)
+  {
+    ++loops;
+  }
+  printf("Took %d loops\n", loops);
+
 	// Set transfer length and source address
 	DMA1_Channel4->CNTR = len;
 	DMA1_Channel4->MADDR = (uint32_t)data;
 	// Enable DMA channel to start the transfer
 	DMA1_Channel4->CFGR |= DMA_CFGR1_EN;
+}
+
+static void dma_uart_tx_wait()
+{
+  while(DMA1_Channel4->CNTR)
+  {
+    /* wait until all data is flushed */
+    __NOP();
+  }
 }
 
 
@@ -1126,20 +1265,21 @@ int main()
 # endif /* core setup */
 #endif /* 1 */
 
-#ifdef W_TEST_USART
-  printf("poke\n");
   uart_setup();
   dma_uart_setup();
+
+
+// #define W_TEST_USART
+#ifdef W_TEST_USART
+  printf("poke\n");
   static const char message[] = "Hello World!\r\n";
 	while (1)
 	{
     printf("touch\n");
-    dma_uart_rx();
-		// dma_uart_tx(message, sizeof(message) - 1);
+    // dma_uart_rx();
+		dma_uart_tx(message, sizeof(message) - 1);
 		Delay_Ms(1000);
   }
-
-  asdf();
 
   char *text = "HelloWorld\n";
   while (1) {
@@ -1170,6 +1310,9 @@ int main()
 
   initializeGPIO();
 
+  /* disable radio ASAP */
+  hc12_sleep();
+
   /* Configure I2C for sensors and mux */
   i2c_err_t err = i2c_init(&i2c);
   if (err)
@@ -1188,14 +1331,20 @@ int main()
   DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
   DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
   DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
+
   if (tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0))
   {
     DPRINTF("Unable to set muxer pin\n");
   }
 
-  if (tca9548a_init(&tca9548a))
+  while (tca9548a_init(&tca9548a))
   {
     DPRINTF("unable to init muxer\n");
+    if (tca9548a_reset(&tca9548a))
+    {
+      DPRINTF("mux reset failed\n");
+    }
+    Delay_Ms(500);
   }
 
   Delay_Ms(250);
@@ -1382,6 +1531,16 @@ int main()
   }
 #endif
 
+  /* prepare packet */
+  hc12_wire_t *hdr = arena_alloc(&packet_arena, sizeof(hc12_wire_t));
+  hdr->hdr.version_zero = 0;
+  hdr->hdr.version = 2;
+  hdr->payload.base.device_id = 0x03; /* that should be from MCU */
+  hdr->payload.base.sensors_count = 1;
+  hdr->payload.base.sync_byte = 'w';
+  hdr->payload.base.version = 0x01;
+  hdr->payload.compoint_sensor.sensor_id = 0xFF; /* TODO */
+
 
   /* safety, if someone will call deepsleep */
   Delay_Ms(2000);
@@ -1398,11 +1557,20 @@ static void bank_fetch(uint8_t bank_id)
 {
   bank_t *bank = &banks[bank_id];
 
+  start:
   DPRINTF("Check bank: %d\n", bank_id);
 
   if (bank_check_new(bank))
   {
     DPRINTF("bank %d check failed\n", bank_id);
+    tca9548a_reset(&tca9548a);
+    // RCC->APB1PCENR &= ~RCC_APB1Periph_I2C1;
+    // I2C1->CTLR1 &= ~I2C_CTLR1_PE;
+    // i2c_init(&i2c);
+    printf("try again\n");
+    goto start;
+
+    return;
   }
 
   temperature_t temp;
@@ -1417,7 +1585,7 @@ static void bank_fetch(uint8_t bank_id)
   }
 
   uint8_t active = 0;
-  for (int i = 0; i < BANK_MAX_SENSORS; i++)
+  for (size_t i = 0; i < BANK_MAX_SENSORS; i++)
   {
     active_sensor_t *sensor = &bank->sensors[i];
     if (sensor->type == SENSOR_NONE)
@@ -1425,23 +1593,31 @@ static void bank_fetch(uint8_t bank_id)
       break;
     }
 
+    const char* sensor_name = sensor_to_str(sensor->type);
+
     // fetch data and put to storage
     obtain_t result = sensor->sensor->obtain(sensor->sensor, &temp, &pres, &hum);
     if (result == OBTAIN_ERROR)
     {
-      DPRINTF("bank %d sensor: %s: error reading data\n", bank_id, sensor_to_str(sensor->type));
-      find_sensor(sensor->type)->factory->destroy(sensor->sensor, &bank->arena);
+      DPRINTF("bank %d sensor: %s: error reading data\n", bank_id, sensor_name);
+
+      const any_sensor_factory_t *factory = find_sensor(sensor->type)->factory;
+      if (factory->destroy)
+      {
+        factory->destroy(sensor->sensor, bank->arena);
+      }
 
       sensor->type = SENSOR_NONE;
       sensor->sensor = NULL;
-    }
 
-    const char* sensor_name = sensor_to_str(sensor->type);
-    printf("%s %d\n", sensor_name, result);
+      /* move to next sensor */
+      continue;
+    }
 
     if (result & OBTAIN_HUMIDITY)
     {
       DPRINTF("bank %d sensor: %s: store humidity: %s (fpt)\n", bank_id, sensor_name, fpt_cstr(hum, -1));
+
       packet_put_reading(&packet, bank_id, i, OBTAIN_HUMIDITY, hum);
     }
 
@@ -1449,12 +1625,14 @@ static void bank_fetch(uint8_t bank_id)
     {
       // DPRINTF("bank %d sensor: %s: store pressure: %s (fpt)\n", bank_id, sensor_name, fpt_cstr(pres, -1));
       DPRINTF("bank %d sensor: %s: store pressure: " PR_FPT " (fpt)\n", bank_id, sensor_name,  F2PRINTF(fpt2fl_q17(pres)));
+
       packet_put_reading(&packet, bank_id, i, OBTAIN_PRESSURE, pres);
     }
 
     if (result & OBTAIN_TEMPERATURE)
     {
       DPRINTF("bank %d sensor: %s: store temperature: %s (fpt)\n", bank_id, sensor_name, fpt_cstr(temp, -1));
+
       packet_put_reading(&packet, bank_id, i, OBTAIN_TEMPERATURE, temp);
     }
 
@@ -1463,7 +1641,7 @@ static void bank_fetch(uint8_t bank_id)
 
   if (active == 0)
   {
-    arena_clear(&bank->arena);
+    arena_clear(bank->arena);
   }
 }
 
@@ -1496,27 +1674,38 @@ void loop()
 
   acquire_pt100();
 
-  for (int b = 0; b < BANKS_COUNT; ++b)
+  for (size_t b = 0; b < BANKS_COUNT; ++b)
   {
     bank_fetch(b);
   }
 
-  if (packet_sensor_readings(&packet))
-  {
-    uint8_t packet_size = sizeof(packet_pool);
-    if (packet_to_bytes(&packet, packet_pool, &packet_size))
-    {
-      DPRINTF("unable to store packet in bytes");
-
-      goto end;
-    }
-
-    DPRINTF("packet size: %d\n", packet_size);
-  }
-  else
+  if (!packet_sensor_readings(&packet))
   {
     DPRINTF("no sensors stored in packet\n");
+    goto end;
   }
+
+  uint8_t packet_size = sizeof(packet_pool);
+  if (packet_to_bytes(&packet, packet_pool, &packet_size))
+  {
+    DPRINTF("unable to store packet in bytes");
+
+    goto end;
+  }
+
+  // calculate crc8 on packet
+
+  DPRINTF("waking up hc12\n");
+
+  hc12_wake_up();
+
+  DPRINTF("packet size: %d\n", packet_size);
+
+  /* send it over uart */
+  hc12_send(packet_pool, packet_size);
+
+  DPRINTF("puting to sleep hc12\n");
+  hc12_sleep();
 
   end:
   Delay_Ms(30000);

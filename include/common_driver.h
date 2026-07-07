@@ -110,31 +110,37 @@ static inline uint8_t libdriver_nop_void(void) { return 0; }
 uint8_t libdriver_spi_write(uint8_t reg, uint8_t *buf, uint16_t len);
 uint8_t libdriver_spi_read(uint8_t reg, uint8_t *buf, uint16_t len);
 
-static uint8_t i2c_send_stop(i2c_device_t *i2c, bool enable)
+static uint8_t i2c_send_stop(i2c_device_t *dev, bool enable)
 {
   if (enable) {
     I2C1->CTLR1 |= CTLR1_STOP_Set;
   } else {
     I2C1->CTLR1 &= CTLR1_STOP_Reset;
   }
+
+  return 0;
 }
 
-static uint8_t i2c_send_start(i2c_device_t *i2c, bool enable)
+static uint8_t i2c_send_start(i2c_device_t *dev, bool enable)
 {
   if (enable) {
     I2C1->CTLR1 |= CTLR1_START_Set;
   } else {
     I2C1->CTLR1 &= CTLR1_START_Reset;
   }
+
+  return 0;
 }
 
-static uint8_t i2c_clock_stretch(i2c_device_t *i2c, bool enable)
+static uint8_t i2c_clock_stretch(i2c_device_t *dev, bool enable)
 {
   if (enable) {
     I2C1->CTLR1 |= CTLR1_NOSTRETCH_Set;
   } else {
     I2C1->CTLR1 &= CTLR1_NOSTRETCH_Reset;
   }
+
+  return 0;
 }
 
 #endif

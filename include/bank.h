@@ -68,7 +68,7 @@ typedef struct
   // is required before acquiring any data
   // NULL or real, there is at-most 2 sensors per bank
   active_sensor_t sensors[BANK_MAX_SENSORS];
-  arena_t arena;
+  arena_t *arena;
 } bank_t;
 
 static uint8_t bank_active_count(const bank_t *bank)

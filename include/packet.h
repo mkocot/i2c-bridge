@@ -108,12 +108,9 @@ void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sen
   reading_config_t *config;
   uint16_t packed;
 
-  printf("put reading: %lx %s\n", value, fpt_cstr(value, -1));
-
   if (sensor == OBTAIN_TEMPERATURE)
   {
     packed = (uint16_t) QUANTIZE_TEMP(value);
-    printf("temp packed: %x\n", packed);
 
     if (bank == PACKET_BANK_PT100) /* handle PT100 */
     {
@@ -132,7 +129,6 @@ void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sen
     config = &packet->pressure_config;
 
     packed = (uint16_t) QUANTIZE_PRESSURE(value);
-    printf("pressure packed: %x\n", packed);
     packet->pressures[config->count] = packed;
   }
   else if (sensor == OBTAIN_HUMIDITY)
@@ -140,7 +136,6 @@ void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sen
     config = &packet->humidity_config;
 
     packed = (uint16_t) QUANTIZE_HUM(value);
-    printf("humidity packed: %x\n", (uint8_t)packed);
     packet->humiditys[config->count] = (uint8_t) packed;
   }
   else
