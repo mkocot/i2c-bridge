@@ -88,6 +88,18 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, temperature_t *out_t, pr
 }
 
 
+static void sensor_factory_bmp280_destroy(any_sensor_t *ctx, arena_t *arena)
+{
+  bmp280_handle_t *bmp280 = (bmp280_handle_t*)ctx->sensor;
+  if (bmp280)
+  {
+    bmp280_deinit(bmp280);
+    ctx->sensor = NULL;
+  }
+
+  arena_clear(arena);
+}
+
 static inline any_sensor_t *sensor_factory_bmp280_new(arena_t *arena)
 {
   // TODO: allocate!!
@@ -116,6 +128,6 @@ static inline any_sensor_t *sensor_factory_bmp280_new(arena_t *arena)
   return sensor_bmp280;
 }
 
-SENSOR_FACTORY(BMP280, BMP280_ADDRESS, sensor_factory_bmp280_new, NULL);
+SENSOR_FACTORY(BMP280, BMP280_ADDRESS, sensor_factory_bmp280_new, sensor_factory_bmp280_destroy);
 
 #endif
