@@ -31,7 +31,6 @@ void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size)
 
   uintptr_t now = (uintptr_t)arena->now;
   uintptr_t aligned_now = (now + alignment - 1) & ~(alignment - 1);
-
   if (aligned_now + size > (uintptr_t)arena->end)
   {
     return NULL;
@@ -46,7 +45,7 @@ void* arena_alloc_aligned(arena_t *arena, size_t alignment, size_t size)
 
 uint8_t arena_clear(arena_t *arena)
 {
-  arena->now = (void*) arena->memory;
+  arena->now = (void*)arena->memory;
 
   return 0;
 }

@@ -1,0 +1,76 @@
+[submodule "lib/aht20"]
+	path = lib/aht20
+	url = git@github.com:mkocot/aht20.git
+	branch = feat/configurable-debug
+[submodule "lib/aht30"]
+	path = lib/aht30
+	url = git@github.com:mkocot/aht30.git
+	branch = feat/configurable-debug
+[submodule "lib/bme280"]
+	path = lib/bme280
+	url = https://github.com/libdriver/bme280.git
+	branch = main
+[submodule "lib/bmp280"]
+	path = lib/bmp280
+	url = https://github.com/mkocot/bmp280.git
+	branch = feat/configurable-debug
+[submodule "lib/CH32V00x_lib_i2c"]
+	path = lib/CH32V00x_lib_i2c
+	url = https://github.com/ADBeta/CH32V00x_lib_i2c.git
+	branch = main
+[submodule "lib/dht11"]
+	path = lib/dht11
+	url = https://github.com/libdriver/dht11.git
+	branch = main
+[submodule "lib/fptc-lib"]
+	path = lib/fptc-lib
+	url = https://github.com/mgetka/fptc-lib.git
+	branch = master
+[submodule "lib/fr_math"]
+	path = lib/fr_math
+	url = https://github.com/deftio/fr_math.git
+	branch = master
+[submodule "lib/fsm"]
+	path = lib/fsm
+	url = https://gitlab.com/iot-loony-bin/fsm.git
+	branch = master
+[submodule "lib/hdc1080"]
+	path = lib/hdc1080
+	url = git@github.com:mkocot/hdc1080.git
+	branch = feat/configurable-debug
+[submodule "lib/htu21d"]
+	path = lib/htu21d
+	url = git@github.com:mkocot/htu21d.git
+	branch = feat/configurable-debug
+[submodule "lib/htu31d"]
+	path = lib/htu31d
+	url = git@github.com:mkocot/htu31d.git
+	branch = feat/configurable-debug
+[submodule "lib/max31865"]
+	path = lib/max31865
+	url = git@github.com:mkocot/max31865.git
+	branch = feat/configurable-debug
+[submodule "lib/mcp9808"]
+	path = lib/mcp9808
+	url = git@github.com:mkocot/mcp9808.git
+	branch = feat/configurable-debug
+[submodule "lib/pca9548a"]
+	path = lib/pca9548a
+	url = https://github.com/libdriver/pca9548a.git
+	branch = main
+[submodule "lib/sht35"]
+	path = lib/sht35
+	url = git@github.com:mkocot/sht35.git
+	branch = feat/configurable-debug
+[submodule "lib/sht4x"]
+	path = lib/sht4x
+	url = git@github.com:mkocot/sht4x.git
+	branch = feat/configurable-debug
+[submodule "lib/shtc3"]
+	path = lib/shtc3
+	url = git@github.com:mkocot/shtc3.git
+	branch = feat/configurable-debug
+[submodule "lib/si7021"]
+	path = lib/si7021
+	url = git@github.com:mkocot/si7021.git
+	branch = feat/configurable-debug
