@@ -118,6 +118,8 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
     goto err;
   }
 
+  Delay_Ms(20);
+
   if (sht35_set_heater(&sht35, SHT35_BOOL_FALSE))
   {
     printf("SHT35: heaters gonna heat\n");
@@ -147,6 +149,7 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
   if (ctx->obtain(ctx, &t, &p, &h) == OBTAIN_ERROR)
   {
+    printf("Obtain impossible\n");
     goto err;
   }
 

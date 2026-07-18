@@ -77,7 +77,9 @@ static supported_sensor_t supported_sensors[] = {
 #define supported_sensors_length (sizeof(supported_sensors) / sizeof(supported_sensors[0]))
 
 static uint8_t packet_pool[sizeof(hc12_wire_t) + sizeof(packet_t)];
-static arena_t packet_arena = ARENA_INIT(packet_pool, sizeof(packet_pool));
+static uint8_t *packet_payload = packet_pool + sizeof(hc12_wire_t) - 1;
+/* maximum allowed payload size (with exclusion on CRC8) */
+#define packet_payload_max_size sizeof(packet_t)
 
 static uint8_t arena_pool[128];
 static arena_t sensor_arena = ARENA_INIT(arena_pool, sizeof(arena_pool));
@@ -626,13 +628,16 @@ static void hc12_enter_cmd()
 
 static void hc12_wake_up()
 {
+  #if 0
   hc12_enter_cmd();
   Delay_Ms(1); /* test */
   hc12_enter_passthrough();
+  #endif
 }
 
 static void hc12_sleep()
 {
+  #if 0
   hc12_enter_cmd();
 
   static const uint8_t sleep_cmd[] = "AT+SLEEP\n"; /* not sure it '\n' is required */
@@ -641,10 +646,13 @@ static void hc12_sleep()
 
   Delay_Ms(10); /* test: how long is enough */
   hc12_enter_passthrough_fast();
+  #endif
 }
 
-static void hc12_send(uint8_t *data, size_t len)
+static void hc12_send_old(const uint8_t *data, size_t len)
 {
+  //  RAM: [= ] 11.9% (used 972 bytes from 8192 bytes)
+  //Flash: [==== ] 44.7% (used 28376 bytes from 63488 bytes)
   /* there is small problem with HC-12 where it's capable of sending 17 bytes
     * at once and truncating everything above
     */
@@ -653,16 +661,70 @@ static void hc12_send(uint8_t *data, size_t len)
     packet_chunks++;
   }
 
-  uint8_t *offset = packet_pool;
+  const uint8_t *offset = data;
   for (size_t i = 0; i < packet_chunks; ++i) {
-    dma_uart_tx(offset, MIN(16, len - (i << 4)));
-    DPRINTF("%06ld: packet dma request done\n", SysTick->CNT);
+    size_t chunk = MIN(16, len - (i << 4));
+    dma_uart_tx(offset, chunk);
+    DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
     dma_uart_tx_wait();
-    DPRINTF("%06ld: wait done\n", SysTick->CNT);
+    DPRINTF("%lu: wait done\n", SysTick->CNT);
     offset += 16;
-    Delay_Ms(40);
+    Delay_Ms(40 * 2);
   }
 }
+
+static void hc12_send_new(const uint8_t *data, size_t len)
+{
+  #define HC12_PACKET_SIZE (17)
+
+      if (len == 0) return;
+
+    DPRINTF("len: %d\n", len);
+
+    const uint8_t *ptr = data;
+    size_t remaining = len;
+
+    while (remaining > 0) {
+        // Send either 17 bytes or whatever is left
+        size_t chunk = (remaining >= HC12_PACKET_SIZE) ? HC12_PACKET_SIZE : remaining;
+
+        dma_uart_tx(ptr, chunk);
+
+        // DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
+
+        uint32_t now = SysTick->CNT;
+        dma_uart_tx_wait();
+        now = SysTick->CNT - now;
+        DPRINTF("wait done: %lu ticks\n", now);
+
+        Delay_Ms(40);
+
+        ptr += chunk;
+        remaining -= chunk;
+    }
+#undef HC12_PACKET_SIZE
+
+  // DPRINTF("len: %d\n", len);
+  // // RAM: [= ] 11.9% (used 972 bytes from 8192 bytes)
+  // // Flash: [==== ] 44.7% (used 28376 bytes from 63488 bytes)
+  // size_t packet_chunks = (len + 15) >> 4;
+  // for (size_t i = 0; i < packet_chunks; ++i) {
+  //   const size_t offset = i * 16;
+  //   const size_t chunk = (i == packet_chunks - 1) ? len - offset : 16;
+
+  //   dma_uart_tx(data + offset, chunk);
+
+  //   DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
+
+  //   dma_uart_tx_wait();
+
+  //   DPRINTF("%lu: wait done\n", SysTick->CNT);
+
+  //   Delay_Ms(40);
+  // }                                                                                                            
+}  
+
+#define hc12_send(data, len) hc12_send_new(data, len)
 
 static void initializeGPIO()
 {
@@ -673,12 +735,14 @@ static void initializeGPIO()
   /* Default state for reset pin is HIGH or HI-Z */
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 1);
 
-  GPIO_port_enable(GPIO_port_C);
+  #if 0
+  GPIO_port_enable(GPIO_port_D);
   /* it can also be driven by openDrain */
   // GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_pushPull, GPIO_Speed_10MHz);
   GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_openDrain, GPIO_Speed_10MHz);
   /* PULL-UP to ensure we are in pass-through mode */
   hc12_enter_passthrough();
+  #endif
 }
 
 static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
@@ -1532,14 +1596,16 @@ int main()
 #endif
 
   /* prepare packet */
-  hc12_wire_t *hdr = arena_alloc(&packet_arena, sizeof(hc12_wire_t));
+  hc12_wire_t *hdr = (hc12_wire_t*) packet_pool;
+  /* CRC8 field will be overwritten, ignore in init */
   hdr->hdr.version_zero = 0;
-  hdr->hdr.version = 2;
+  hdr->hdr.version = 0x02;
+  hdr->hdr.size_zero = 0;
   hdr->payload.base.device_id = 0x03; /* that should be from MCU */
   hdr->payload.base.sensors_count = 1;
-  hdr->payload.base.sync_byte = 'w';
-  hdr->payload.base.version = 0x01;
-  hdr->payload.compoint_sensor.sensor_id = 0xFF; /* TODO */
+  hdr->payload.base.sync_byte = 'W';
+  hdr->payload.base.version = 0x02;
+  hdr->payload.compoint_sensor.sensor_id = 0x13;
 
 
   /* safety, if someone will call deepsleep */
@@ -1680,15 +1746,24 @@ void loop()
     goto end;
   }
 
-  uint8_t packet_size = sizeof(packet_pool);
-  if (packet_to_bytes(&packet, packet_pool, &packet_size))
+  /* set to max allowed, it will be changed to real size after compression */
+  uint8_t packet_size = packet_payload_max_size;
+  uint8_t *packet_data = packet_payload;
+  if (packet_to_bytes(&packet, packet_data, &packet_size))
   {
     DPRINTF("unable to store packet in bytes");
 
     goto end;
   }
 
+  // set payload size: dynamic payload + static header
+  ((hc12_wire_t*)packet_pool)->hdr.size = packet_size + sizeof(weather_compound_packet_t);
+
   // calculate crc8 on packet
+  // HDR + payload
+  uint8_t total_size_without_crc8 = (sizeof(hc12_wire_t) - 1) + packet_size;
+  // Put CRC8 at the end
+  packet_payload[packet_size] = calculate_crc8(packet_pool, total_size_without_crc8);
 
   DPRINTF("waking up hc12\n");
 
@@ -1696,8 +1771,8 @@ void loop()
 
   DPRINTF("packet size: %d\n", packet_size);
 
-  /* send it over uart */
-  hc12_send(packet_pool, packet_size);
+  /* send it over uart and include crc8 at the end */
+  hc12_send(packet_pool, total_size_without_crc8 + 1);
 
   DPRINTF("puting to sleep hc12\n");
   hc12_sleep();

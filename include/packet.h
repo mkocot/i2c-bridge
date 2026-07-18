@@ -28,7 +28,7 @@ typedef union {
   };
 } temperature_config_t;
 
-STATIC_ASSERT(sizeof(reading_config_t) == 1);
+STATIC_ASSERT(sizeof(temperature_config_t) == 1);
 
 typedef union {
   uint16_t raw;
@@ -115,7 +115,7 @@ void packet_put_reading(packet_t *packet, int bank, int sensor_idx, obtain_t sen
     if (bank == PACKET_BANK_PT100) /* handle PT100 */
     {
       packet->temperature_config.has_pt100 = 1;
-      packet->temperature_pt100 = packed;
+      packet->temperature_pt100 = value;
 
       return;
     }
@@ -170,7 +170,8 @@ static uint8_t packet_sensor_readings(const packet_t *packet)
 #define _banks_expected_size(wat) \
   ((wat.count != 0) * (1 + (wat.count > 4)))
 
-#define put_data(ptr, data, size) (memcpy(ptr, data, (size)) + (size))
+#define put_data(ptr, data, size) \
+  (memcpy(ptr, data, (size)) + (size))
 
 static int packet_to_bytes(packet_t *packet, void *bytes, uint8_t *size)
 {
@@ -186,7 +187,7 @@ static int packet_to_bytes(packet_t *packet, void *bytes, uint8_t *size)
   uint8_t expected_size = 3 /* headers */
   /* temperature */
   + _banks_expected_size(packet->temperature_config) /* banks configuration */
-  + packet->temperature_config.count * sizeof(packet->temperatures[0]) + packet->temperature_config.has_pt100 /* raw readings */
+  + packet->temperature_config.count * sizeof(packet->temperatures[0]) + sizeof(packet->temperature_pt100) * packet->temperature_config.has_pt100 /* raw readings */
 
   // /* pressure */
   + _banks_expected_size(packet->pressure_config)

@@ -60,6 +60,7 @@ typedef enum
 struct any_sensor_s {
   /* private sensor data */
   void *sensor;
+  void *arena; /* arena pointer for destroy */
 
   /* check if sensor is valid and set configuration */
   uint8_t (*probe)(any_sensor_t *ctx);
@@ -125,7 +126,7 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #error FPT_WBITS should be defined to 16 bits!
 #endif
 
-#define Q_RANGE(FROM, TO) ((TO) - (FROM) + 1)
+#define Q_RANGE(FROM, TO) ((TO) - (FROM))
 
 #define T_MIN -40
 #define T_MAX 85
@@ -149,21 +150,27 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define fpt2fl_q17(T) (fpt2flx(T, P_R))
 
 /* finally define min and max value */
-#define PQ_MIN        (i2fpt_q17(P_MIN))
-#define PQ_MAX        (i2fpt_q17(P_MAX))
+#define PQ_MIN_17     (i2fpt_q17(P_MIN))
+#define PQ_MAX_17     (i2fpt_q17(P_MAX))
+#define PQ_MIN        (i2fpt(P_MIN))
+#define PQ_MAX        (i2fpt(P_MAX))
 
 #define H_MIN 0
 #define H_MAX 100
 #define HQ_MIN i2fpt(H_MIN)
 #define HQ_MAX i2fpt(H_MAX)
 #define HQ_MAX2 i2fpt_norm(H_MAX, -8)
+#define MAX_BYTES_VALUE(BYTES) \
+  (1 << (8 * (BYTES))) - 1
 
+#define CLAMP_TO_MAX(VAL, BYTES) \
+  MIN(MAX_BYTES_VALUE((BYTES)), (VAL))
 
 #define QUANTIZE_Q(FROM, TO, BYTES, STORAGE, VALUE) \
-  (STORAGE)fpt_div( \
-    fpt_sub(MINMAX(FROM, TO, VALUE), FROM), \
-    Q_RANGE(FROM, TO) \
-  )
+  (STORAGE)CLAMP_TO_MAX(fpt_div( \
+    fpt_sub(MINMAX((FROM), (TO), (VALUE)), (FROM)), \
+    Q_RANGE((FROM), (TO)) \
+  ), (BYTES))
 
 // static uint16_t quant(fpt val) {
 //     if (val < Q_MIN) {
@@ -197,11 +204,11 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 
 /* 16bits: 88000 .. 110000 */
 #define QUANTIZE_PRESSURE(V) \
-  QUANTIZE_Q(PQ_MIN, PQ_MAX, 2, uint16_t, V)
+  QUANTIZE_Q(PQ_MIN_17, PQ_MAX_17, 2, uint16_t, V)
 
 
-#define DEQUANTIZE_PRESSURE(V) \
-  DEQUANTIZE_Q(PQ_MIN, PQ_MAX, 2, V)
+#define DEQUANTIZE_PRESSURE_FLOAT(V) \
+  fpt2fl(V) * Q_RANGE(P_MIN, P_MAX) + P_MIN
 
 #define QUANTIZE_HUM2(V) \
   QUANTIZE_Q(HQ_MIN, HQ_MAX2, 1, uint8_t, V)
@@ -209,35 +216,35 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define DEQUANTIZE_HUM2(V) \
   DEQUANTIZE_Q(HQ_MIN, HQ_MAX2, 1, V)
 
-static inline uint8_t quant_h(fpt val) {
-    if (val < HQ_MIN) {
-        val = HQ_MIN;
-    } else if (val > HQ_MAX) {
-        val = HQ_MAX;
-    }
+// static inline uint8_t quant_h(fpt val) {
+//     if (val < HQ_MIN) {
+//         val = HQ_MIN;
+//     } else if (val > HQ_MAX) {
+//         val = HQ_MAX;
+//     }
 
-    val = fpt_div(val, HQ_MAX);
-    /* 
-     * dunno why but improves maximum difference from 0.39 to 0.19
-     */
-    val += val & 0xFF;
-    val >>= 8;
+//     val = fpt_div(val, HQ_MAX);
+//     /* 
+//      * dunno why but improves maximum difference from 0.39 to 0.19
+//      */
+//     val += val & 0xFF;
+//     val >>= 8;
 
 
-    return val;
-}
+//     return val;
+// }
 
 /* 8bits: 0 .. 100*/
 #define QUANTIZE_HUM(V) QUANTIZE_HUM2(V)
 
-static inline float dequant_h(uint8_t val) {
-    fpt as_fpt = val;
-    as_fpt = fpt_mul(as_fpt, HQ_MAX);
-    as_fpt <<= 8;
+// static inline float dequant_h(uint8_t val) {
+//     fpt as_fpt = val;
+//     as_fpt = fpt_mul(as_fpt, HQ_MAX);
+//     as_fpt <<= 8;
 
 
-    return fpt2fl(as_fpt);
-}
+//     return fpt2fl(as_fpt);
+// }
 
 #define DEQUANTIZE_HUM(V) DEQUANTIZE_HUM2(V)
 
@@ -260,7 +267,7 @@ static inline float decode_temp(int32_t t)
 
 static inline float decode_pressure(uint16_t p)
 {
-  return DEQUANTIZE_PRESSURE(p);
+  return DEQUANTIZE_PRESSURE_FLOAT(p);
 }
 
 #endif

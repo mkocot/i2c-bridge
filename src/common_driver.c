@@ -134,7 +134,7 @@ uint8_t libdriver_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t *buf, uint
     ret = i2c_read_reg(&i2c, reg, buf, len);
   }
 
-  printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+  // printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
   return ret;
 }
 
@@ -144,7 +144,7 @@ uint8_t libdriver_iic_addr16_write(uint8_t addr, uint16_t reg, uint8_t *buf, uin
   i2c.regb = 2;
 
   uint8_t ret = i2c_write_reg(&i2c, reg, buf, len);
-  printf("A16W: %X, %X, %u %u =%u\n", i2c.addr, reg, i2c.regb, len, ret);
+  // printf("A16W: %X, %X, %u %u =%u\n", i2c.addr, reg, i2c.regb, len, ret);
   return ret;
 }
 
