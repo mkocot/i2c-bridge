@@ -109,6 +109,15 @@ static uint8_t sensor_htu21d_probe(any_sensor_t *ctx)
 
     htu21d.inited = 0;
 
+    /* The whole Si70xx family answers these commands, so only a genuine
+       HTU21D/SHT21 (ID 0x32) may be claimed; other chips are left to
+       their own drivers. */
+    uint8_t siid;
+    if (iic_si70xx_id(DRIVER_HTU21D_ADDRESS, &siid) && siid != 0x32)
+    {
+        return 1;
+    }
+
     int ret = htu21d_init(&htu21d);
     if (ret)
     {
@@ -138,6 +147,15 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
     uint8_t serial[3];
 
     htu31d.inited = 0;
+
+    /* 0x1E is HTU31D's reset, but undefined on Si70xx/HTU2x (ACKed, ignored):
+       do not run the init sequence on a chip that answers as that family. */
+    uint8_t siid;
+    if (iic_si70xx_id(DRIVER_HTU31D_ADDRESS, &siid) &&
+        (siid == 0x15 || siid == 0x32 || siid == 0x14 || siid == 0x0D))
+    {
+        return 1;
+    }
 
     printf("HTU31d: %d\n", __LINE__);
     int err = htu31d_init(&htu31d);

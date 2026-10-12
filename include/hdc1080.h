@@ -35,6 +35,15 @@ static uint8_t sensor_hdc1080_probe(any_sensor_t *ctx)
 {
     hdc1080.inited = 0;
 
+    /* 0xFE is HDC1080's ID register, but the reset command on Si70xx/HTU2x:
+       do not touch a chip that answers as that family. */
+    uint8_t siid;
+    if (iic_si70xx_id(DRIVER_HDC1080_ADDRESS, &siid) &&
+        (siid == 0x15 || siid == 0x32 || siid == 0x14 || siid == 0x0D))
+    {
+        return 1;
+    }
+
     i2c.addr = DRIVER_HDC1080_ADDRESS;
 
     DO_OR(hdc1080_init(&hdc1080));

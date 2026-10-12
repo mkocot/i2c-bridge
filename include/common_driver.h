@@ -78,6 +78,20 @@ uint8_t libdriver_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t *buf, uint
 
 uint8_t libdriver_iic_addr16_write(uint8_t addr, uint16_t reg, uint8_t *buf, uint16_t len);
 
+/* 0xFCC9 is the Si70xx/HTU2x family ID read; on other 0x40-family chips it is
+   a harmless register read. Returns 1 and the ID byte on a clean read:
+   0x15=Si7021, 0x32=HTU21D/SHT21, 0x14=Si7020, 0x0D=Si7013. */
+static uint8_t iic_si70xx_id(uint8_t addr, uint8_t *id)
+{
+  uint8_t buf[6] = {0};
+  if (libdriver_iic_addr16_read(addr << 1, 0xFCC9, buf, 6) != 0)
+  {
+    return 0;
+  }
+  *id = buf[0];
+  return 1;
+}
+
 static inline uint8_t libdriver_nop_void(void) { return 0; }
 
 #define DRIVER_SET_DEFAULT_IIC(DRIVER, HANDLE, TYPE)                   \
