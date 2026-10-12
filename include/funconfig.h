@@ -4,12 +4,18 @@
 // defined in platformio.ini
 //#define CH32V003                    (1)
 
+// Something new in framework, required so set it to 0
+// #define FUNCONF_CUSTOM_MTVEC        (0)
+
 #define FUNCONF_DEBUG_HARDFAULT     (0)
 #define FUNCONF_USE_DEBUGPRINTF     (1)
 #define FUNCONF_HSE_BYPASS          (0)
 
 // #define FUNCONF_USE_HSE 0 // external crystal on PA1 PA2
 // #define FUNCONF_SYSTEM_CORE_CLOCK   (4000000)
+#define FUNCONF_SYSTEM_CORE_CLOCK   (8000000) // HSI 24MHz / 3 via HPRE KO
+// #define FUNCONF_SYSTEM_CORE_CLOCK   (12000000) // HSI 24MHz / 2 via HPRE OK
+// #define FUNCONF_SYSTEM_CORE_CLOCK   (24000000) // HSI 24MHz / 1 via HPRE OK
 
 #ifdef FUNCONF_SYSTEM_CORE_CLOCK
 #define FUNCONF_USE_HSI             (1) // internal 24MHz clock oscillator

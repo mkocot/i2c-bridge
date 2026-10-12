@@ -11,6 +11,7 @@
 #include "htuxx.h"
 #include "mcp9808.h"
 #include "wtocol.h"
+#include "sleep.h"
 
 #include <alloca.h>
 #include <stdio.h>
@@ -617,7 +618,7 @@ static void hc12_enter_passthrough()
 {
   hc12_enter_passthrough_fast();
   /* give it a while to settle */
-  Delay_Ms(80); /* test delay, value from manual */
+  Delay_Ms(40); /* test delay, 80: value from manual */
 }
 
 static void hc12_enter_cmd()
@@ -628,16 +629,15 @@ static void hc12_enter_cmd()
 
 static void hc12_wake_up()
 {
-  #if 0
+  #if 1
   hc12_enter_cmd();
-  Delay_Ms(1); /* test */
   hc12_enter_passthrough();
   #endif
 }
 
 static void hc12_sleep()
 {
-  #if 0
+  #if 1
   hc12_enter_cmd();
 
   static const uint8_t sleep_cmd[] = "AT+SLEEP\n"; /* not sure it '\n' is required */
@@ -735,14 +735,43 @@ static void initializeGPIO()
   /* Default state for reset pin is HIGH or HI-Z */
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 1);
 
-  #if 0
   GPIO_port_enable(GPIO_port_D);
   /* it can also be driven by openDrain */
   // GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_pushPull, GPIO_Speed_10MHz);
   GPIO_pinMode(HC12_SET_PIN, GPIO_pinMode_O_openDrain, GPIO_Speed_10MHz);
   /* PULL-UP to ensure we are in pass-through mode */
   hc12_enter_passthrough();
-  #endif
+}
+
+// A slave half-served mid-byte holds SDA low; only clock pulses let it finish.
+// Up to 9 SCL toggles, then a STOP, release the wire. i2c_init() restores AF.
+static void i2c_bus_recover(void)
+{
+  const uint32_t scl = 1 << I2C_PIN_SCL;
+  const uint32_t sda = 1 << I2C_PIN_SDA;
+
+  I2C1->CTLR1 &= ~I2C_CTLR1_PE;
+
+  // high SDA: no wire wedge, peripheral re-init alone is enough
+  if (I2C_PORT->INDR & sda) return;
+
+  I2C_PORT->CFGLR = (I2C_PORT->CFGLR & ~(0x0F << (4 * I2C_PIN_SCL))) |
+                    (GPIO_Speed_10MHz | GPIO_CNF_OUT_OD) << (4 * I2C_PIN_SCL);
+  I2C_PORT->CFGLR = (I2C_PORT->CFGLR & ~(0x0F << (4 * I2C_PIN_SDA))) |
+                    (GPIO_Speed_10MHz | GPIO_CNF_OUT_OD) << (4 * I2C_PIN_SDA);
+
+  for (int i = 0; i < 9 && (I2C_PORT->INDR & sda) == 0; ++i)
+  {
+    I2C_PORT->OUTDR &= ~scl;
+    Delay_Us(5);
+    I2C_PORT->OUTDR |= scl;
+    Delay_Us(5);
+  }
+
+  I2C_PORT->OUTDR &= ~sda;
+  Delay_Us(5);
+  I2C_PORT->OUTDR |= sda;
+  Delay_Us(5);
 }
 
 static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
@@ -757,6 +786,7 @@ static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
   while(tca9548a_channel_set(handle, TCA9548A_CHANNEL_NONE))
   {
     printf(".");
+    i2c_bus_recover();
     // i2c_send_stop(&i2c, true);
 
     Delay_Ms(100);
@@ -831,6 +861,18 @@ static const supported_sensor_t *find_sensor(sensor_t type)
 
 static uint8_t bank_check_new(bank_t *bank)
 {
+  if (I2C1->STAR2 & I2C_STAR2_BUSY)
+  {
+    /* previous bank's probing can leave the bus held; its channel is still
+       open here, so recovery reaches the device that wedged the bus */
+    DPRINTF("i2c bus busy, recovering\n");
+    i2c_bus_recover();
+    Delay_Ms(100);
+    RCC->APB1PCENR &= ~RCC_APB1Periph_I2C1;
+    I2C1->CTLR1 &= ~I2C_CTLR1_PE;
+    i2c_init(&i2c);
+  }
+
   if (tca9548a_channel_set(&tca9548a, bank->channel))
   {
     DPRINTF("channel failed\n");
@@ -1051,7 +1093,7 @@ void uart_fun()
 #define CALCULATED_HPRE_DIV ((((HSI_VALUE) / (FUNCONF_SYSTEM_CORE_CLOCK)) - 1) << 4)
 
 #if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
-# if (CALCULATED_HPRE_DIV + 1) * HSI_VALUE == FUNCONF_SYSTEM_CORE_CLOCK
+# if HSI_VALUE / ((CALCULATED_HPRE_DIV >> 4) + 1) != FUNCONF_SYSTEM_CORE_CLOCK
 #   error Requested clock is not multiplication or division of 24MHz
 # endif
 # if CALCULATED_HPRE_DIV & ~0xF0
@@ -1262,9 +1304,9 @@ static void dma_uart_tx_wait()
 
 int main()
 {
-  SystemInit();
+  // SystemInit();
 
-#if 0
+#if 1
   printf("Awaiting DOOM\n");
   #define DOOM 10
   for (int i = 0; i < DOOM; ++i) {
@@ -1272,10 +1314,15 @@ int main()
     printf("%d/%d\n", i + 1, DOOM);
   }
   printf("Doom\n");
+  SystemInit();
+#if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
+  // SystemInit sets HPRE to DIV1, restore the configured core clock
+  RCC->CFGR0 = (RCC->CFGR0 & ~RCC_HPRE) | CALCULATED_HPRE_DIV;
+#endif
 
   // Check if there is ANY reasons to run it clocks other than 8MHz
   // Running at native is supported by default
-# if defined(FUNCONF_SYSTEM_CORE_CLOCK) && FUNCONF_SYSTEM_CORE_CLOCK != HSI_VALUE * (FUNCONF_PLL_MULTIPLIER + FUNCONF_USE_PLL)
+# if 0 && defined(FUNCONF_SYSTEM_CORE_CLOCK) && FUNCONF_SYSTEM_CORE_CLOCK != HSI_VALUE * (FUNCONF_PLL_MULTIPLIER + FUNCONF_USE_PLL)
     // no-os framework
     // RCC->CTLR |= (uint32_t)0x00000001;
     // RCC->CFGR0 &= (uint32_t)0xF8FF0000;
@@ -1319,7 +1366,7 @@ int main()
 
   printf("Hello?\n");
 
-#   if 0
+#   if 1
   printf("Testing clock; each output should be printed in 1 second delay\n");
   for (int i = 0; i < DOOM; ++i) {
     Delay_Ms(1000);
@@ -1778,5 +1825,9 @@ void loop()
   hc12_sleep();
 
   end:
+#if MCU_SLEEP
+  sleep_for(30000);
+#else
   Delay_Ms(30000);
+#endif
 }

@@ -6,9 +6,16 @@
 #define W_I2C_SCALED_CYCLES(CYCLES) \
   ((CYCLES) / W_TICK_RATIO)
 
+/* 8MHz core gets 50kHz: doubles the CPU's per-byte I2C budget */
+#if FUNCONF_SYSTEM_CORE_CLOCK <= 8000000
+#define I2C_DEFAULT_CLKR I2C_CLK_50KHZ
+#else
+#define I2C_DEFAULT_CLKR I2C_CLK_100KHZ
+#endif
+
 /* i2c default configuration */
 i2c_device_t i2c = {
-    .clkr = I2C_CLK_100KHZ, /* "default" */
+    .clkr = I2C_DEFAULT_CLKR, /* "default" */
     .type = I2C_ADDR_7BIT,  /* common addr type */
     .addr = 0x00,           /* device addres */
     .regb = 1,              /* register bytes, most devices uses 1 byte for register */
