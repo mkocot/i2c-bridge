@@ -1,0 +1,25 @@
+# Glossary
+
+- **Address family** - sensor types that share one I2C address (0x40: HDC1080, HTU31D, SI7021, HTU21D); the first successful probe claims the address and later same-address sensors are disabled.
+- **Ping** - address-only I2C transaction checking that a slave ACKs at its address; cheaper than a probe, it does not verify identity.
+- **Probe** - the per-driver initialization handshake (identity register read, config write) that decides whether a sensor is detected on a bank; a bare ping ACK is not enough for detection.
+- **Bank** - one downstream channel of the I2C multiplexer, hosting up to two sensors; banks are probed in sequence each loop, independently of each other.
+- **Bus recovery** - forcing a wedged I2C slave to release the bus by toggling SCL and generating a STOP, followed by re-initializing the I2C peripheral.
+- **Wedge** - the I2C bus stuck busy (SDA held low, or the peripheral's busy flag latched): every transaction times out with I2C_ERR_BUSY until bus recovery runs.
+- **Clock stretching** - the slave holding SCL low to pause the master's clock while it is busy (e.g. converting a measurement). The master must not poll a transaction while the line is stretched; it either waits for the release or uses a protocol that avoids stretching.
+- **Conversion time** - the sensor's processing delay between a measurement trigger and data-ready. The datasheet's maximum value governs communication waits, not the typical one (see ADR-0001).
+- **Hold-master mode** - a measurement protocol in which the sensor pulls SCL low for the whole conversion and releases it to signal data-ready; the master must wait for the release before reading. The HTU21D driver keeps this flag only as a routing choice; the glue swaps in the no-hold commands, so the wire traffic is no-hold (ADR-0001). The SHT3x/SHTC3 drivers spell the same choice as the clock-stretching flag on the single-shot command; the glue passes the non-stretching variant.
+- **No-hold mode** - a measurement protocol in which the sensor frees SCL during conversion; the master waits the maximum conversion time (or polls) before reading. Used by SI7021, since ADR-0001 HTU21D, and since ADR-0003 SHT3x/SHTC3 (clock stretching disabled).
+- **Chunk** - 17 bytes, the most the HC-12 forwards in one burst; the module truncates anything above. Larger payloads are sent as a sequence of chunks.
+- **Passthrough mode** - HC-12 state (SET high) in which serial data on TX is forwarded to the radio. Also called data mode.
+- **Command mode** - HC-12 state (SET low) in which the module accepts AT commands.
+- **Sleep** - HC-12 low-power state (~22 uA) entered by AT+SLEEP. No data transmission while asleep; the module wakes by entering command mode.
+- **Wake** - entering command mode to exit sleep before a transmission.
+- **MCU sleep** - CH32V00x low-power state, core off via WFE, SRAM and peripheral register contents held; timed wake via the auto-wakeup (AWU) timer.
+- **AWU** - auto-wakeup unit: LSI (~128kHz) timer with prescaler (PWR->AWUPSC) and window (PWR->AWUWR, window = value + 1) that raises EXTI line 9 to wake the core.
+- **Standby** - CH32V00x lower-power state (PDDS) with the regulator in low-power mode.
+- **Core clock** - HCLK, here HSI (24MHz) divided by 3 via RCC->CFGR0.HPRE, set from FUNCONF_SYSTEM_CORE_CLOCK. SystemInit resets HPRE to /1, so the divider is re-applied after boot and after sleep/standby wake.
+- **Known state** - the HC-12 can be in any state at power-up or after a failed transmission; the wake-send-sleep cycle and the boot sleep exist to guarantee a predictable state before each send.
+- **Transmission cycle** - the per-packet sequence wake -> send (chunked) -> sleep.
+- **SDI printf** - printf() output the target emits through the SWIO debug pin (bit-banged via the DMDATA register, set up by ch32fun's SetupDebugPrintf); the debug probe decodes it and forwards it to the host. It is not UART output: nothing appears on the serial pins.
+- **Serial Monitor** - PlatformIO/VS Code monitor UI over a serial port; in this firmware it is wired to the SDI printf stream (minichlink -T bridged to a pty) rather than to an MCU UART, which is unused for logging. The raw-terminal alternative is the sdi_printf_monitor platform target.
