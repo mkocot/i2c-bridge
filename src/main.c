@@ -62,10 +62,7 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_BMP280, &sensor_factory_BMP280}, // crashing 003?
   {SENSOR_HDC1080, &sensor_factory_HDC1080},
   {SENSOR_HTU31D, &sensor_factory_HTU31D},
-#ifdef WITH_HTU21D
-  // broken chip sample? unable to read temp
   {SENSOR_HTU21D, &sensor_factory_HTU21D},
-#endif
   {SENSOR_SI7021, &sensor_factory_SI7021},
   #ifdef CH32V006
   {SENSOR_SHT3X, &sensor_factory_SHT3X},

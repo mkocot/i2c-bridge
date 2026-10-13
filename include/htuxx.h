@@ -62,8 +62,8 @@ static obtain_t sensor_htu21d_obtain(any_sensor_t *ctx, temperature_t *t, pressu
         return OBTAIN_ERROR;
     }
 
-    *t = htu21d_t_fpt(tmp_temperature);
-    *h = htu21d_h_fpt(tmp_humidity_f);
+    *t = htu21d_t_fpt(tmp_raw_temperature16);
+    *h = htu21d_h_fpt(tmp_raw_humidity16);
 
     return OBTAIN_TH;
 }
@@ -227,19 +227,32 @@ static uint8_t i2c_r_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
 
     printf("HTU accessing register: %04X for %d\n", reg_value, len);
 
-    if (reg_len) {
-        return libdriver_iic_addr16_read(addr, reg_value, buf, len);
-    }
-    printf("HTU: r=%02d\n", (uint8_t)reg_value);
-    return libdriver_iic_addr_read_delay(addr, reg_value, buf, len, 20);
-    // return libdriver_iic_addr_read(addr, reg_value, buf, len);
-
+    /* the serial number read needs the command and the read in one
+       transaction: a separate read after the command write is NACKed by the
+       sensor (I2C_ERR_NACK) */
+    return libdriver_iic_addr16_read(addr, reg_value, buf, len);
 }
 
 static uint8_t htu_read_with_scl(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
+    uint16_t ms = 60;
+
+    /* the driver passes the hold-master commands (0xE3 temp / 0xE5 RH); send
+       the no-hold twins (0xF3/0xF5) and wait the datasheet maximum conversion
+       time plus margin, so the sensor never stretches SCL and the single
+       transaction cannot race its hold */
+    if (reg == 0xE5)
+    {
+        reg = 0xF5;
+        ms = 25;
+    }
+    else if (reg == 0xE3)
+    {
+        reg = 0xF3;
+    }
+
     printf("HTU: a=%02X r=%02X l=%d\n", addr, reg, len);
-    return libdriver_iic_addr_read_delay(addr, reg, buf, len, 20);
+    return libdriver_iic_addr_read_delay(addr, reg, buf, len, ms);
 }
 
 static any_sensor_t* sensor_htu21d_new(arena_t *arena)
