@@ -263,6 +263,7 @@ static any_sensor_t* sensor_htu21d_new(arena_t *arena)
         DRIVER_HTU21D_LINK_IIC_READ_WITH_SCL(&htu21d, htu_read_with_scl);
         DRIVER_HTU21D_LINK_IIC_READ(&htu21d, libdriver_iic_addr_read);
         DRIVER_HTU21D_LINK_IIC_WRITE(&htu21d, libdriver_iic_addr_write);
+        DRIVER_HTU21D_LINK_DEBUG_PRINT(&htu21d, debug_print);
 
         DRIVER_HTU21D_LINK_IIC_WRITE_CMD(&htu21d, i2c_w_cmd);
         DRIVER_HTU21D_LINK_IIC_READ_CMD(&htu21d, i2c_r_cmd);
