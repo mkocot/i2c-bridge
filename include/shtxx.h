@@ -166,7 +166,7 @@ static inline obtain_t sensor_sht3x_obtain(any_sensor_t *ctx, temperature_t *tem
 {
   sht35.inited = 1;
 
-  /* no clock stretch, wire layer waits the conversion (ADR-0003) */
+  /* no clock stretch, wire layer waits the conversion (ADR-0004) */
   if (sht35_single_read(&sht35, SHT35_BOOL_FALSE, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
   {
     return OBTAIN_ERROR;
@@ -226,7 +226,7 @@ static inline obtain_t sensor_shtc3_obtain(any_sensor_t *ctx, temperature_t *tem
 {
   shtc3.inited = 1;
 
-  /* no clock stretch, wire layer waits the conversion (ADR-0003) */
+  /* no clock stretch, wire layer waits the conversion (ADR-0004) */
   if (shtc3_read(&shtc3, SHTC3_BOOL_FALSE, &tmp_raw_temperature16, NULL, &tmp_raw_humidity16, NULL))
   {
     return OBTAIN_ERROR;

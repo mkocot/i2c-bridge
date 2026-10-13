@@ -1,0 +1,3 @@
+# Guard destructive probes in a shared-address sensor family
+
+Sensors sharing an I2C address (0x40: HDC1080, HTU31D, SI7021, HTU21D) are probed in supported_sensors[] order and the first success claims the address. The HDC1080 probe reads register 0xFE and the HTU31D probe writes 0x1E - both are reset commands on the Si70xx/HTU2x family - so a genuine Si7021 was reset and wedged the bus (I2C_ERR_BUSY, SDA held low) before its own probe ran. Instead of reordering the family, each destructive probe first reads the Si70xx ID register (0xFCC9) and bails without issuing its command when the chip answers as that family (IDs 0x15/0x32/0x14/0x0D). A future 0x40-family driver must either be ID-checked or apply the same guard before issuing commands.
