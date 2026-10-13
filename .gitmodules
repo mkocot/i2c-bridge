@@ -18,10 +18,6 @@
 	path = lib/CH32V00x_lib_i2c
 	url = https://github.com/ADBeta/CH32V00x_lib_i2c.git
 	branch = main
-[submodule "lib/dht11"]
-	path = lib/dht11
-	url = https://github.com/libdriver/dht11.git
-	branch = main
 [submodule "lib/fptc-lib"]
 	path = lib/fptc-lib
 	url = https://github.com/mgetka/fptc-lib.git
