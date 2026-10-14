@@ -52,7 +52,7 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
   uint8_t ret;
 
   /*
-  * fetching data in 'single shot' is taking absurd 12ms. Setting this timeout
+  * fetching data in 'single shot' is taking up-to 15ms. Setting this timeout
   * in i2c driver will be hard penalty during communication with other devices
   * to fix it we are using delayed read only for 2 commands. Anyway MCU could
   * do something usefull in that time...
@@ -62,7 +62,7 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
     case 0x24: /* single read without clock stretching */
       /* fallthrough */
     case 0x2C: /* single read with clock stretching */
-      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 12);
+      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 15);
       break;
     case 0xE0: /* sht35_continuous_read */
       /* fallthrough */
@@ -95,7 +95,7 @@ static uint8_t sensor_shtc3_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
     case 0x58: /* RH without clock stretch */
       /* fallthrough */
     case 0x5C: /* RH with clock stretch */
-      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 12); /* NOTE(m): This is probably too high */
+      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 15); /* NOTE(m): This is probably too high */
       break;
     default:
       ret = i2c_read_reg(&i2c, reg, buf, len);
