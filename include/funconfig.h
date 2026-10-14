@@ -8,7 +8,11 @@
 // #define FUNCONF_CUSTOM_MTVEC        (0)
 
 #define FUNCONF_DEBUG_HARDFAULT     (0)
+
+#ifndef FUNCONF_USE_DEBUGPRINTF
 #define FUNCONF_USE_DEBUGPRINTF     (1)
+#endif
+
 #define FUNCONF_HSE_BYPASS          (0)
 
 // #define FUNCONF_USE_HSE 0 // external crystal on PA1 PA2

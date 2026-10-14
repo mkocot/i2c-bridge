@@ -4,6 +4,12 @@
 
 #include <stdio.h>
 
+#ifdef DRIVER_TCA9548A_WITH_DEBUG_PRINT
+#define DRIVER_TCA9548A_DEBUG_PRINT(FMT, ...) handle->debug_print(FMT, ##__VA_ARGS__)
+#else
+#define DRIVER_TCA9548A_DEBUG_PRINT(FMT, ...) ((void)0)
+#endif
+
 static uint8_t update_channel( tca9548a_handle_t *handle);
 static uint8_t read_channels(tca9548a_handle_t *handle);
 
@@ -124,7 +130,7 @@ uint8_t update_channel(tca9548a_handle_t *handle)
 
     if (ret)
     {
-        printf("unable to set device channels: %X\n", handle->channels);
+        DRIVER_TCA9548A_DEBUG_PRINT("unable to set device channels: %X\n", handle->channels);
         return ret;
     }
 

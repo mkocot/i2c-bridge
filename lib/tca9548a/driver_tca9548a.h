@@ -39,6 +39,7 @@ struct tca9548a_handle_s {
     uint8_t (*iic_read)(uint8_t *buf, uint16_t len);
     uint8_t (*iic_write)(uint8_t *buf, uint16_t len);
     void (*delay_ms)(uint32_t delay);
+    void (*debug_print)(const char *const fmt, ...);
 };
 
 typedef struct tca9548a_handle_s tca9548a_handle_t;
@@ -47,6 +48,11 @@ typedef struct tca9548a_handle_s tca9548a_handle_t;
 #define DRIVER_TCA9548A_LINK_IIC_READ(HANDLE, FUC)  (HANDLE)->iic_read = FUC
 #define DRIVER_TCA9548A_LINK_IIC_WRITE(HANDLE, FUC) (HANDLE)->iic_write = FUC
 #define DRIVER_TCA9548A_LINK_DELAY_MS(HANDLE, FUC)  (HANDLE)->delay_ms = FUC
+#ifdef DRIVER_TCA9548A_WITH_DEBUG_PRINT
+#define DRIVER_TCA9548A_LINK_DEBUG_PRINT(HANDLE, FUC)  (HANDLE)->debug_print = FUC
+#else
+#define DRIVER_TCA9548A_LINK_DEBUG_PRINT(HANDLE, FUC)  do {} while(0)
+#endif
 
 /**
  * @brief     set the iic address pin configuration

@@ -91,7 +91,7 @@ static obtain_t sensor_htu31d_obtain(any_sensor_t *ctx, temperature_t *t, pressu
 
     // int full_degrees = (int)tmp_temperature;
     // int decimals = ((int)(tmp_temperature * 100)) & 100;
-    // printf("T: %d.%d\n", full_degrees, decimals);
+    // DPRINTF("T: %d.%d\n", full_degrees, decimals);
     return OBTAIN_TH;
 }
 
@@ -157,11 +157,11 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
         return 1;
     }
 
-    printf("HTU31d: %d\n", __LINE__);
+    DPRINTF("HTU31d: %d\n", __LINE__);
     int err = htu31d_init(&htu31d);
     if (err)
     {
-        printf("HTU31d: %d err=%d\n", __LINE__, err);
+        DPRINTF("HTU31d: %d err=%d\n", __LINE__, err);
         return err;
     }
     /* it's default ON or OFF ?!*/
@@ -174,7 +174,7 @@ static uint8_t sensor_htu31d_probe(any_sensor_t *ctx)
     /* Connection check */
     DO_OR(htu31d_get_serial_number(&htu31d, serial));
 
-    // printf("SERIAL: %x%x%x\n", serial[0], serial[1], serial[2]);
+    // DPRINTF("SERIAL: %x%x%x\n", serial[0], serial[1], serial[2]);
 
     // All "0" is invalid
     return !(serial[0] != 0 && serial[1] != 0 && serial[2] != 0);
@@ -199,7 +199,7 @@ static uint8_t i2c_w_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
     reg_len = 0;
 
     if (len > 2 || len == 0) {
-        printf("register > 2 bytes or empty");
+        DPRINTF("register > 2 bytes or empty");
         return 1;
     }
     
@@ -212,7 +212,7 @@ static uint8_t i2c_w_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
     }
 
     // FA0F
-    printf("HTU21D: prepare register=%04X length=%d\n", reg_value, reg_len);
+    DPRINTF("HTU21D: prepare register=%04X length=%d\n", reg_value, reg_len);
 
     return 0;
 }
@@ -221,11 +221,11 @@ static uint8_t i2c_r_cmd(uint8_t addr, uint8_t *buf, uint16_t len)
 {
     if (reg_len == 0)
     {
-        printf("no register is known for read cmd\n");
+        DPRINTF("no register is known for read cmd\n");
         return 1;
     }
 
-    printf("HTU accessing register: %04X for %d\n", reg_value, len);
+    DPRINTF("HTU accessing register: %04X for %d\n", reg_value, len);
 
     /* the serial number read needs the command and the read in one
        transaction: a separate read after the command write is NACKed by the
@@ -251,7 +251,7 @@ static uint8_t htu_read_with_scl(uint8_t addr, uint8_t reg, uint8_t *buf, uint16
         reg = 0xF3;
     }
 
-    printf("HTU: a=%02X r=%02X l=%d\n", addr, reg, len);
+    DPRINTF("HTU: a=%02X r=%02X l=%d\n", addr, reg, len);
     return libdriver_iic_addr_read_delay(addr, reg, buf, len, ms);
 }
 

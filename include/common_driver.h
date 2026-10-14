@@ -5,6 +5,7 @@
 #include <stdio.h> /* printf */
 #include <lib_i2c.h>
 #include <ch32fun.h>
+#include "debug.h"
 #include "spi.h"
 #include <fptc.h>
 
@@ -57,7 +58,7 @@ static inline void libdriver_delay_ms(uint32_t delay) { Delay_Ms(delay); }
 
 static void debug_print(const char *const fmt, ...)
 {
-  printf("%s", fmt);
+  DPRINTF("%s", fmt);
 }
 
 

@@ -220,11 +220,11 @@ void spi_fun2(void)
     .mode = SPI_MODE0,
     .nss_pin = PC0,
   };
-  printf("XX_1 = %d\n", spi.is_hw);
+  DPRINTF("XX_1 = %d\n", spi.is_hw);
   spi_init(&spi, &cfg);
-  printf("XX_2 = %d\n", spi.is_hw);
+  DPRINTF("XX_2 = %d\n", spi.is_hw);
 
-  printf("I = %d\n", bme.inited);
+  DPRINTF("I = %d\n", bme.inited);
 
   while(1)
   {
@@ -232,11 +232,11 @@ void spi_fun2(void)
     {
       if (bme280_init(&bme))
       {
-        printf("F\n");
+        DPRINTF("F\n");
       }
       else
       {
-        printf("I\n");
+        DPRINTF("I\n");
         bme280_set_mode(&bme, BME280_MODE_FORCED);
         bme280_set_filter(&bme, BME280_FILTER_OFF);
         bme280_set_humidity_oversampling(&bme, BME280_OVERSAMPLING_x1);
@@ -246,12 +246,12 @@ void spi_fun2(void)
     }
     else
     {
-      printf("Already done\n");
+      DPRINTF("Already done\n");
       uint32_t tr, pr, hr;
       float t, p, h;
 
       bme280_read_temperature_pressure_humidity(&bme, &tr, &t, &pr, &p, &hr, &h);
-      printf("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
+      DPRINTF("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
     }
 
     Delay_Ms(1000);
@@ -312,38 +312,38 @@ void spi_fun(void)
       {
         DPRINTF("I\n");
         if (max31865_set_wire(&max31865, MAX31865_WIRE_3)) {
-          printf("F1\n");
+          DPRINTF("F1\n");
         }
         if (max31865_set_fault_detection_cycle_control(&max31865, MAX31865_FAULT_DETECTION_CYCLE_CONTROL_NO_ACTION))
         {
-          printf("F2\n");
+          DPRINTF("F2\n");
         }
         if (max31865_set_filter_select(&max31865, MAX31865_FILTER_SELECT_50HZ)) {
-          printf("F3\n");
+          DPRINTF("F3\n");
         }
         if (max31865_set_resistor(&max31865, MAX31865_RESISTOR_100PT)) {
-          printf("F4\n");
+          DPRINTF("F4\n");
         }
         if (max31865_set_vbias(&max31865, MAX31865_BOOL_FALSE)) {
-          printf("F5\n");
+          DPRINTF("F5\n");
         }
         if (max31865_set_reference_resistor(&max31865, 430)) {
-          printf("F6\n");
+          DPRINTF("F6\n");
         }
       }
     }
     else
     {
-      printf("Already done\n");
+      DPRINTF("Already done\n");
       static max31865_wire_t wire;
       max31865_get_wire(&max31865, &wire);
-      printf("wire: %d\n", wire);
+      DPRINTF("wire: %d\n", wire);
       // max31865_set_wire(&max31865, MAX31865_WIRE_3);
 
       if (max31865_single_read(&max31865, &tmp_raw_temperature16, &tmp_temperature)) {
-        printf("T: F\n");
+        DPRINTF("T: F\n");
       } else {
-      printf("T: %d (RAW: %d)\n", (int)tmp_temperature, tmp_raw_temperature16);
+      DPRINTF("T: %d (RAW: %d)\n", (int)tmp_temperature, tmp_raw_temperature16);
       }
     }
 
@@ -370,7 +370,7 @@ void spi_fun(void)
 
     uint64_t elapsed = SysTick->CNT - cycles;
 
-    printf("Chip id: %X (%04d)\n", chip_id, (int)elapsed);
+    DPRINTF("Chip id: %X (%04d)\n", chip_id, (int)elapsed);
 
     Delay_Ms(2000);
   }
@@ -387,21 +387,21 @@ void spi_fun(void)
   // end()
   // SS: 1
 
-  printf("0: SPI STATR: %X\n", SPI1->STATR);
+  DPRINTF("0: SPI STATR: %X\n", SPI1->STATR);
   // TODO ? Software mode is not working as expected and no data is received
   // from sensor. Hardware works OK, but requires pin PC1 or PC0 (alternate)
   spi_init(&spi, 0, SPI_MODE0, 8, 1);
-  printf("1: SPI STATR: %X\n", SPI1->STATR);
+  DPRINTF("1: SPI STATR: %X\n", SPI1->STATR);
   // Enable SPI
   // SPI1->CTLR1 |= SPI_CTLR1_SPE;
-  // printf("2: SPI STATR: %X\n", SPI1->STATR);
+  // DPRINTF("2: SPI STATR: %X\n", SPI1->STATR);
   // // 
   // // Enable SPI
   // while(1) {
-  //   printf("ENABLE\n");
+  //   DPRINTF("ENABLE\n");
   //   SPI1->CTLR1 |= SPI_CTLR1_SPE;
   //   Delay_Ms(4000);
-  //   printf("DISABLE\n");
+  //   DPRINTF("DISABLE\n");
   //   SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
   //   Delay_Ms(4000);
   // }
@@ -415,10 +415,10 @@ void spi_fun(void)
 
     #if 1
     // SPI1->CTLR1 |= SPI_CTLR1_SPE;
-    // printf("START: SPI STATR: %X\n", SPI1->STATR);
+    // DPRINTF("START: SPI STATR: %X\n", SPI1->STATR);
     // Delay_Ms(100);
     // ensure nothing is pending?
-    // printf("Wait for Transmit buffer empty\n");
+    // DPRINTF("Wait for Transmit buffer empty\n");
     // while(!(SPI1->STATR & SPI_STATR_TXE))
     // {
     //   __NOP();
@@ -428,7 +428,7 @@ void spi_fun(void)
 
     // // Delay_Ms(100);
     // // wait for completion
-    // printf("Wait for transfer completion\n");
+    // DPRINTF("Wait for transfer completion\n");
     // while(!(SPI1->STATR & SPI_STATR_TXE))
     // {
     //   __NOP();
@@ -444,11 +444,11 @@ void spi_fun(void)
     #if 1
     uint8_t resp = 0xFF;
     libdriver_spi_read(0xD0, &resp, 1);
-    printf("R: %X\n", resp);
+    DPRINTF("R: %X\n", resp);
     #elif 1
     uint8_t reg = 0xD0;
     spi_send_receive(&reg, 1, &reg, 1);
-    printf("R: %X\n", reg);
+    DPRINTF("R: %X\n", reg);
     #else
 
     spi_begin_transaction(&spi);
@@ -456,23 +456,23 @@ void spi_fun(void)
     spi_send8(0xD0);
 
     // wait for data?
-    printf("Wait for data receive\n");
+    DPRINTF("Wait for data receive\n");
     while (!(SPI1->STATR & SPI_STATR_RXNE))
     {
       __NOP();
     }
     // Delay_Ms(200);
-    printf("X: %X\n", SPI1->DATAR);
+    DPRINTF("X: %X\n", SPI1->DATAR);
 
     // Send dommy data and wait for response of 1 byte
     spi_send8(0x00);
-    printf("Wait for data receive (real)\n");
+    DPRINTF("Wait for data receive (real)\n");
     while (!(SPI1->STATR & SPI_STATR_RXNE))
     {
       __NOP();
     }
     // Delay_Ms(200);
-    printf("R: %X\n", SPI1->DATAR);
+    DPRINTF("R: %X\n", SPI1->DATAR);
     spi_end_transaction(&spi);
     #endif
 
@@ -480,9 +480,9 @@ void spi_fun(void)
     #else
 
     // spi_send8(0xD0);
-    printf("R: %X\n", spi_recv8(0xD0));
+    DPRINTF("R: %X\n", spi_recv8(0xD0));
     // SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
-    // printf("STOP: SPI STATR: %X\n", SPI1->STATR);
+    // DPRINTF("STOP: SPI STATR: %X\n", SPI1->STATR);
     #endif
 
     // end transaction
@@ -509,7 +509,7 @@ void spi_fun(void)
 
   spi_init(&spi, &cfg);
 
-  printf("I = %d\n", bme.inited);
+  DPRINTF("I = %d\n", bme.inited);
 
   while(1)
   {
@@ -517,11 +517,11 @@ void spi_fun(void)
     {
       if (bme280_init(&bme))
       {
-        printf("F\n");
+        DPRINTF("F\n");
       }
       else
       {
-        printf("I\n");
+        DPRINTF("I\n");
         bme280_set_mode(&bme, BME280_MODE_FORCED);
         bme280_set_filter(&bme, BME280_FILTER_OFF);
         bme280_set_humidity_oversampling(&bme, BME280_OVERSAMPLING_x1);
@@ -531,12 +531,12 @@ void spi_fun(void)
     }
     else
     {
-      printf("Already done\n");
+      DPRINTF("Already done\n");
       uint32_t tr, pr, hr;
       float t, p, h;
 
       bme280_read_temperature_pressure_humidity(&bme, &tr, &t, &pr, &p, &hr, &h);
-      printf("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
+      DPRINTF("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
     }
 
     Delay_Ms(1000);
@@ -561,13 +561,13 @@ static inline uint8_t tca9548a_iic_write(uint8_t *buf, uint16_t len)
   uint8_t err;
   if ((err = tca9458a_iic_setup()))
   {
-    printf("iic_setup: fialed: %d\n", err);
+    DPRINTF("iic_setup: fialed: %d\n", err);
     return 1;
   }
 
   if ((err = i2c_write_raw(&i2c, buf, len)))
   {
-    printf("iic_write_raw: fialed: %d\n", err);
+    DPRINTF("iic_write_raw: fialed: %d\n", err);
   }
   return err;
 }
@@ -577,13 +577,13 @@ static inline uint8_t tca9548a_iic_read(uint8_t *buf, uint16_t len)
   uint8_t err;
   if ((err = tca9458a_iic_setup()))
   {
-    printf("iic_setup: fialed: %d\n", err);
+    DPRINTF("iic_setup: fialed: %d\n", err);
     return 1;
   }
 
   if ((err = i2c_read_raw(&i2c, buf, len)))
   {
-    printf("iic_read_raw: fialed: %d\n", err);
+    DPRINTF("iic_read_raw: fialed: %d\n", err);
   }
 
   return err;
@@ -594,7 +594,7 @@ static inline uint8_t tca9548a_iic_read(uint8_t *buf, uint16_t len)
 
 void i2c_scan_callback(const uint8_t addr)
 {
-  printf("Address: 0x%02X Responded.\n", addr);
+  DPRINTF("Address: 0x%02X Responded.\n", addr);
 }
 
 static void dma_uart_tx(const void *data, size_t len);
@@ -615,13 +615,20 @@ static void hc12_enter_passthrough()
 {
   hc12_enter_passthrough_fast();
   /* give it a while to settle */
-  Delay_Ms(40); /* test delay, 80: value from manual */
+  Delay_Ms(80); /* test delay, 80: value from manual */
 }
+
+/* HC12_CMD_SETTLE_MS: SET low to first AT byte. The manual's 40ms was verified
+ * failing (AT+SLEEP ignored: no OK+SLEEP, module stays awake); 150ms verified
+ * working (LA: OK+SLEEP received). */
+#ifndef HC12_CMD_SETTLE_MS
+#define HC12_CMD_SETTLE_MS (150)
+#endif
 
 static void hc12_enter_cmd()
 {
   GPIO_digitalWrite(HC12_SET_PIN, 0);
-  Delay_Ms(40); /* test: value from manual */
+  Delay_Ms(HC12_CMD_SETTLE_MS);
 }
 
 static void hc12_wake_up()
@@ -637,12 +644,16 @@ static void hc12_sleep()
   #if 1
   hc12_enter_cmd();
 
-  static const uint8_t sleep_cmd[] = "AT+SLEEP\n"; /* not sure it '\n' is required */
+  static const uint8_t sleep_cmd[] = "AT+SLEEP";
   dma_uart_tx(sleep_cmd, sizeof(sleep_cmd) - 1); /* ignore '\0' */
   dma_uart_tx_wait();
 
-  Delay_Ms(10); /* test: how long is enough */
+  /* SET high arms sleep on cmd-mode exit; no reply line (RX wired to SET), so
+   * blind-wait past the module's worst response: measured 29.5ms, 3.4x margin */
+  Delay_Ms(100);
+  /* fast variant as we do not send anything over long period after sleep */
   hc12_enter_passthrough_fast();
+  // hc12_enter_passthrough();
   #endif
 }
 
@@ -779,10 +790,10 @@ static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
   Delay_Ms(1);
   GPIO_digitalWrite(TCA9548A_RESET_PIN, 1);
   
-  printf("reset channels after reset: ");
+  DPRINTF("reset channels after reset: ");
   while(tca9548a_channel_set(handle, TCA9548A_CHANNEL_NONE))
   {
-    printf(".");
+    DPRINTF(".");
     i2c_bus_recover();
     // i2c_send_stop(&i2c, true);
 
@@ -791,7 +802,7 @@ static uint8_t tca9548a_reset(tca9548a_handle_t *handle)
     I2C1->CTLR1 &= ~I2C_CTLR1_PE;
     i2c_init(&i2c);
   }
-  printf("\n");
+  DPRINTF("\n");
 
   return 0;
 }
@@ -939,7 +950,7 @@ static uint8_t bank_check_new(bank_t *bank)
     bank->sensors[sensor_id++].sensor = sensor;
 
     /* drop any sensors that share I2C address */
-    printf("check remaining sensors\n");
+    DPRINTF("check remaining sensors\n");
 
     for (size_t j = i + 1; j < supported_sensors_length; ++j)
     {
@@ -1046,7 +1057,7 @@ void uart_fun()
 		u32 head = (RX_BUF_LEN - DMA1_Channel5->CNTR) % RX_BUF_LEN; // current write position in rx_buf
     
     // if (head) {
-    //   printf("HEAD: %lu\n", head);
+    //   DPRINTF("HEAD: %lu\n", head);
     // }
 		
 		// process new bytes in rx_buf. when a newline character is detected, the command is copied to cmd_buf
@@ -1054,7 +1065,7 @@ void uart_fun()
 		{
 			if ( rx_buf[tail] == '\n' ) 
 			{
-        printf("%s\n", rx_buf);
+        DPRINTF("%s\n", rx_buf);
 				cmd_end = tail;
 				u32 cmd_i = 0; // carret position in cmd_buf
 				if (cmd_end > cmd_st)
@@ -1074,7 +1085,7 @@ void uart_fun()
 				// null terminate
 				cmd_buf[cmd_i] = '\0';
 
-        printf("'%s'\n", cmd_buf);
+        DPRINTF("'%s'\n", cmd_buf);
 
 				// update start position for next command
 				cmd_st = (cmd_end + 1) % RX_BUF_LEN;
@@ -1211,7 +1222,7 @@ static void dma_uart_setup(void)
 
 static void process_cmd(const uint8_t *cmd)
 {
-  printf("CMD: %s\n", cmd);
+  DPRINTF("CMD: %s\n", cmd);
   dma_uart_tx("hi\r\n", 4);
   dma_uart_tx_wait();
 }
@@ -1233,7 +1244,7 @@ static void dma_uart_rx()
 		// process new bytes in rx_buf. when a newline character is detected, the command is copied to cmd_buf
 		while (tail != head)
 		{
-      printf("buf: %d '%c'\n", rx_buf[tail], rx_buf[tail]);
+      DPRINTF("buf: %d '%c'\n", rx_buf[tail], rx_buf[tail]);
       // minicom mill send '\r' as [ENTER] not '\n'
 			if ( rx_buf[tail] == '\n' || rx_buf[tail] == '\r' ) 
 			{
@@ -1274,14 +1285,6 @@ static void dma_uart_tx(const void *data, size_t len)
 	// Disable DMA channel (just in case a transfer is pending)
 	DMA1_Channel4->CFGR &= ~DMA_CFGR1_EN;
 
-  // Debug purpose only
-  int loops = 0;
-  while(DMA1_Channel4->CFGR & DMA_CFGR1_EN)
-  {
-    ++loops;
-  }
-  printf("Took %d loops\n", loops);
-
 	// Set transfer length and source address
 	DMA1_Channel4->CNTR = len;
 	DMA1_Channel4->MADDR = (uint32_t)data;
@@ -1301,21 +1304,25 @@ static void dma_uart_tx_wait()
 
 int main()
 {
-  // SystemInit();
+  /* safety, if someone will call deepsleep */
+  Delay_Ms(2000);
 
-#if 1
-  printf("Awaiting DOOM\n");
-  #define DOOM 10
-  for (int i = 0; i < DOOM; ++i) {
-    Delay_Ms(1000);
-    printf("%d/%d\n", i + 1, DOOM);
-  }
-  printf("Doom\n");
   SystemInit();
 #if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
   // SystemInit sets HPRE to DIV1, restore the configured core clock
   RCC->CFGR0 = (RCC->CFGR0 & ~RCC_HPRE) | CALCULATED_HPRE_DIV;
 #endif
+
+#if 0
+# if 0
+  DPRINTF("Awaiting DOOM\n");
+  #define DOOM 10
+  for (int i = 0; i < DOOM; ++i) {
+    Delay_Ms(1000);
+    DPRINTF("%d/%d\n", i + 1, DOOM);
+  }
+  DPRINTF("Doom\n");
+# endif
 
   // Check if there is ANY reasons to run it clocks other than 8MHz
   // Running at native is supported by default
@@ -1336,41 +1343,41 @@ int main()
     RCC->CFGR0 |= CALCULATED_HPRE_DIV; /* set divider to 3 -> 24 / 3 == 8*/
 
 
-    // printf("System clock: ");
+    // DPRINTF("System clock: ");
     // if ((RCC->CFGR0 & RCC_SW) == RCC_SW_HSE) {
-    //   printf("HSE\n");
+    //   DPRINTF("HSE\n");
     // } else if ((RCC->CFGR0 & RCC_SW) == RCC_SW_HSI) {
-    //   printf("HSI\n");
+    //   DPRINTF("HSI\n");
     // } else {
-    //   printf("PLL\n");
+    //   DPRINTF("PLL\n");
     // }
     
 
-    // printf("MCO source: ");
+    // DPRINTF("MCO source: ");
     // switch (RCC->CFGR0 & RCC_CFGR0_MCO)
     // {
     //   case RCC_CFGR0_MCO_HSE:
-    //     printf("HSE\n"); break;
+    //     DPRINTF("HSE\n"); break;
     //   case RCC_CFGR0_MCO_PLL:
-    //     printf("PLL\n"); break;
+    //     DPRINTF("PLL\n"); break;
     //   case RCC_CFGR0_MCO_HSI:
-    //     printf("MCO\n"); break;
+    //     DPRINTF("MCO\n"); break;
     //   case RCC_CFGR0_MCO_SYSCLK:
-    //     printf("SYSCLK\n"); break;
+    //     DPRINTF("SYSCLK\n"); break;
     //   default:
-    //     printf("NONE\n"); break;
+    //     DPRINTF("NONE\n"); break;
     // }
 
-  printf("Hello?\n");
+  DPRINTF("Hello?\n");
 
-#   if 1
-  printf("Testing clock; each output should be printed in 1 second delay\n");
+# endif /* core setup */
+#   if 0
+  DPRINTF("Testing clock; each output should be printed in 1 second delay\n");
   for (int i = 0; i < DOOM; ++i) {
     Delay_Ms(1000);
-    printf("TICK\n");
+    DPRINTF("TICK\n");
   }
 #   endif /* 0 */
-# endif /* core setup */
 #endif /* 1 */
 
   uart_setup();
@@ -1379,11 +1386,11 @@ int main()
 
 // #define W_TEST_USART
 #ifdef W_TEST_USART
-  printf("poke\n");
+  DPRINTF("poke\n");
   static const char message[] = "Hello World!\r\n";
 	while (1)
 	{
-    printf("touch\n");
+    DPRINTF("touch\n");
     // dma_uart_rx();
 		dma_uart_tx(message, sizeof(message) - 1);
 		Delay_Ms(1000);
@@ -1391,7 +1398,7 @@ int main()
 
   char *text = "HelloWorld\n";
   while (1) {
-    printf("emit to uart\n");
+    DPRINTF("emit to uart\n");
     char *buf = text;
     for (int i = 0; i < strlen(text);++i) {
       while( !(USART1->STATR & USART_FLAG_TC));
@@ -1419,6 +1426,7 @@ int main()
   initializeGPIO();
 
   /* disable radio ASAP */
+  hc12_wake_up();
   hc12_sleep();
 
   /* Configure I2C for sensors and mux */
@@ -1439,6 +1447,7 @@ int main()
   DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
   DRIVER_TCA9548A_LINK_IIC_READ(&tca9548a, tca9548a_iic_read);
   DRIVER_TCA9548A_LINK_IIC_WRITE(&tca9548a, tca9548a_iic_write);
+  DRIVER_TCA9548A_LINK_DEBUG_PRINT(&tca9548a, debug_print);
 
   if (tca9548a_set_addr_pin(&tca9548a, TCA9548A_ADDRESS_A0))
   {
@@ -1457,187 +1466,18 @@ int main()
 
   Delay_Ms(250);
 
-  // const uint32_t oldtout = i2c.tout;
-  // i2c.tout >> 2;
-  // // while (1)
-  // // {
-  //   printf("Scan begin\n");
-  //   i2c_scan(i2c_scan_callback);
-  // //   Delay_Ms(1000);
-  // // }
-  // i2c.tout = oldtout;
-
   #if 0
-  i2c.addr = 0x40;
-  i2c.regb = 2;
-
-  // Read HTU2x chipID
-  // get Electronic Serial Number: SNA_3 CRC SNA_2 CRC SNA_1 CRC SNA_0 CRC
-  uint8_t data[] = {0xFA, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-  if (i2c_read_reg(&i2c, 0xFA0F, data, 8) == 0) {
-  printf("%x %x %x %x %x %x %x %x\n", data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
-  }
-
-  // SNB_3 SNB_2 CRC SNB_1 SNB_0 CRC
-  // SNB_3 - > device ID
-  // 0x0D=13=Si7013
-  // 0x14=20=Si7020
-  // 0x15=21=Si7021
-  // 0x32=50=HTU2x/SHT2x
-  if (i2c_read_reg(&i2c, 0xFCC9, data, 6) == 0) {
-  printf("%x %x %x %x %x %x\n", data[0], data[1], data[2], data[3], data[4], data[5]);
-  }
-
-  // not supported on htu2x
-  // 0x84B8
-  if (i2c_read_reg(&i2c, 0x84B8, data, 1) == 0) {
-    printf("%x\n", data[0]);
-  } else {
-    printf("X\n");
-  }
-
-  i2c.regb = 1;
-  // OK with delay
-  #if 1
-  i2c_clock_stretch(&i2c, true);
-
-  data[0] = 0;
-  data[1] = 0;
-  data[2] = 0;
-  // this is nor working as 'hold master'
-  i2c.tout = 100000;
-  if (i2c_read_reg_delay(&i2c, 0xE3, data, 3, 30)) {
-    printf("FIAL\n");
-  }
-  #else
-  while(1) {
-    data[0] = 0xF3;
-    if (i2c_write_raw(&i2c, &data[0], 1)) {
-      printf("w failed\n");
-    }
-    Delay_Ms(80);
-    if (i2c_read_raw(&i2c, data, 3) == 0) {
-      printf("OK\n");
-    }
-  }
-
-  data[0] = 0xF3;
-  if (i2c_write_raw(&i2c, &data[0], 1)) {
-    printf("w failed\n");
-  }
-  while(i2c_read_raw(&i2c, data, 3) != 0) {
-    printf("nothing wait...\n");
-    Delay_Ms(100);
-  }
-#endif
-  printf("%x %x %x\n", data[0], data[1], data[2]);
-
-#endif
-
-#if 0
-  // SHT3x works OK in "solo" mode
-  while(1)
+  const uint32_t oldtout = i2c.tout;
+  i2c.tout >> 2;
+  while (1)
   {
-    const uint32_t oldtout = i2c.tout;
-    i2c.tout >> 2;
-    // while (1)
-    // {
-      printf("Scan begin\n");
-      i2c_scan(i2c_scan_callback);
-    //   Delay_Ms(1000);
-    // }
-    i2c.tout = oldtout;
-
-    for (int sidx = 0; sidx < supported_sensors_length; ++sidx) {
-      supported_sensor_t *supported_sensor = supported_sensors + sidx;
-      any_sensor_factory_t *ss =  supported_sensor->factory; // &sensor_factory_HTU21D;
-
-      any_sensor_t *s = ss->construct(NULL);
-
-      const char *sensor_name = sensor_to_str(supported_sensor->sensor);
-
-      uint8_t result = s->probe(s);
-      if (result)
-      {
-        printf("[%s] No sensor probed: %d\n", sensor_name, result);
-        goto err;
-      }
-
-      uint32_t t;
-      uint16_t h, p;
-      obtain_t available = s->obtain(s, &t, &p, &h);
-      if (available == OBTAIN_ERROR)
-      {
-        printf("[%s] obtain failed\n", sensor_name);
-        goto err;
-      }
-      if (available & OBTAIN_TEMPERATURE) {
-        printf("[%s] T: %05lu (FPT)\n", sensor_name, t);
-      }
-      if (available & OBTAIN_HUMIDITY) {
-        printf("[%s] H: %05u (FPT)\n", sensor_name, h);
-      }
-      if (available & OBTAIN_PRESSURE) {
-        printf("[%s] P: %05u (FPT)\n", sensor_name, p);
-      }
-
-      sidx = supported_sensors_length;
-
-      err:
-
-      if (ss->destroy) {
-        printf("[%s] Dtroy\n", sensor_name);
-        ss->destroy(s, NULL);
-        printf("[%s] Dtroy done\n", sensor_name);
-      }
-
-      Delay_Ms(5000);
-    }
+    DPRINTF("Scan begin\n");
+    i2c_scan(i2c_scan_callback);
+    Delay_Ms(1000);
+    break;
   }
-#endif
-  
-  
-  // supported_sensor_t *ss = &supported_sensors[0];
-  // i2c.addr = ss->factory->address;
-  // any_sensor_t *s = ss->factory->construct(NULL);
-  // s->obtain()
-
-  // "szeroki" 0x18
-  // "malutki" 0x40
-  // htu31d 0x40
-  // while(1) {
-  //   printf("SKAN\n");
-  //   i2c.tout *= 1;
-  //   i2c_init(&i2c);
-  //   Delay_Ms(1000);
-  //   i2c_scan(i2c_scan_callback);
-  //   printf("SKAN END\n");
-  //   Delay_Ms(2000);
-  // }
-
-  // printf("Let's the scan begin\n");
-  // i2c_scan(i2c_scan_callback);
-  // printf("Scan done\n");
-
-  // It's OPEN DRAIN mode, so by default it uses TCA5498A board resistor
-  // to keep reset pin high
-  Delay_Ms(2000);
-
-
-#if 0
-
-  aht20_iic_init();
-  if (aht20_init(&aht20))
-  {
-    printf("aht20 failed\n");
-  }
-
-  aht30_iic_init();
-  if (aht30_init(&aht30))
-  {
-    printf("aht30 failed\n");
-  }
-#endif
+  i2c.tout = oldtout;
+  #endif
 
   /* prepare packet */
   hc12_wire_t *hdr = (hc12_wire_t*) packet_pool;
@@ -1651,9 +1491,6 @@ int main()
   hdr->payload.base.version = 0x02;
   hdr->payload.compoint_sensor.sensor_id = 0x13;
 
-
-  /* safety, if someone will call deepsleep */
-  Delay_Ms(2000);
 
   while (1)
   {
@@ -1677,7 +1514,7 @@ static void bank_fetch(uint8_t bank_id)
     // RCC->APB1PCENR &= ~RCC_APB1Periph_I2C1;
     // I2C1->CTLR1 &= ~I2C_CTLR1_PE;
     // i2c_init(&i2c);
-    printf("try again\n");
+    DPRINTF("try again\n");
     goto start;
 
     return;
@@ -1755,7 +1592,7 @@ void acquire_pt100()
   if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
   {
     packet_put_reading(&packet, PACKET_BANK_PT100, 0, OBTAIN_TEMPERATURE, tmp_raw_temperature16);
-    printf("pt100 reading ok: %d (raw)\n", tmp_raw_temperature16);
+    DPRINTF("pt100 reading ok: %d (raw)\n", tmp_raw_temperature16);
   }
   else
   {

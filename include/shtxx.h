@@ -47,7 +47,7 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
 {
   i2c.addr = addr >> 1;
   i2c.regb = 2;
-  printf("SHT3X: read: %X\n", i2c.addr);
+  DPRINTF("SHT3X: read: %X\n", i2c.addr);
 
   uint8_t ret;
 
@@ -71,7 +71,7 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
       break;
   }
 
-  // printf("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
+  // DPRINTF("A16R: %X %X %u %u =%d\n", i2c.addr, reg, i2c.regb, len, ret);
 
   return ret;
 }
@@ -102,7 +102,7 @@ static uint8_t sensor_shtc3_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
       break;
   }
 
-  // printf("SHTC3R: addr=0x%X reg=0x%X regb=%u len=%u ret=%d\n", i2c.addr, reg, i2c.regb, len, ret);
+  // DPRINTF("SHTC3R: addr=0x%X reg=0x%X regb=%u len=%u ret=%d\n", i2c.addr, reg, i2c.regb, len, ret);
 
   return ret;
 }
@@ -114,7 +114,7 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
   if (sht35_init(&sht35))
   {
-    printf("SHT35: init failed\n");
+    DPRINTF("SHT35: init failed\n");
     goto err;
   }
 
@@ -122,25 +122,25 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
   if (sht35_set_heater(&sht35, SHT35_BOOL_FALSE))
   {
-    printf("SHT35: heaters gonna heat\n");
+    DPRINTF("SHT35: heaters gonna heat\n");
     goto err;
   }
 
   if (sht35_set_repeatability(&sht35, SHT35_REPEATABILITY_HIGH))
   {
-    printf("SHT35: repatability failed\n");
+    DPRINTF("SHT35: repatability failed\n");
     goto err;
   }
 
   uint16_t status;
   if (sht35_get_status(&sht35, &status))
   {
-    printf("SHT35: reading status failed\n");
+    DPRINTF("SHT35: reading status failed\n");
     goto err;
   }
   else
   {
-    printf("SHT35: status %X\n", status);
+    DPRINTF("SHT35: status %X\n", status);
   }
 
   temperature_t t;
@@ -149,7 +149,7 @@ static inline uint8_t sensor_sht3x_probe(any_sensor_t *ctx)
 
   if (ctx->obtain(ctx, &t, &p, &h) == OBTAIN_ERROR)
   {
-    printf("Obtain impossible\n");
+    DPRINTF("Obtain impossible\n");
     goto err;
   }
 

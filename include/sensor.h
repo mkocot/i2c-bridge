@@ -137,7 +137,7 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define P_MIN         (88000) /* 882 hPa was record low in hurricane */
 #define P_MAX         (110000) /* 1100 hPa bmp280 max pressure */
 
-/* pressure is Q17.14 (sign, 17, 14)*/
+/* pressure is Q18.14 (sign, 17, 14) */
 #define P_R           (FPT_FBITS - 2) /* radix */
 #define P_FBITS       (P_R)
 #define P_WBITS       (FPT_WBITS + 2)
@@ -166,8 +166,19 @@ static inline uint8_t sensor_noop(any_sensor_t *ctx)
 #define CLAMP_TO_MAX(VAL, BYTES) \
   MIN(MAX_BYTES_VALUE((BYTES)), (VAL))
 
+/* 32-bit-only exact replacement for fpt_div with a constant divisor B
+ * that is a multiple of 2^16 (i2fpt(N), i2fpt_q17(N), i2fpt_norm(N, k)):
+ * (A * 2^16) / B == A / (B >> 16). Used instead of fpt_div so no
+ * 64-bit division helpers are pulled into the firmware. */
+static inline fpt fpt_div_const(fpt A, fpt B)
+{
+  return (fpt)(A / (B >> 16));
+}
+
+/* FROM and TO must be compile-time constants of i2fpt form (multiples of
+ * 2^16): fpt_div_const is 32-bit-only and exact for those divisors. */
 #define QUANTIZE_Q(FROM, TO, BYTES, STORAGE, VALUE) \
-  (STORAGE)CLAMP_TO_MAX(fpt_div( \
+  (STORAGE)CLAMP_TO_MAX(fpt_div_const( \
     fpt_sub(MINMAX((FROM), (TO), (VALUE)), (FROM)), \
     Q_RANGE((FROM), (TO)) \
   ), (BYTES))

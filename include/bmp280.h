@@ -36,12 +36,12 @@ static uint8_t sensor_bmp280_probe(any_sensor_t *ctx)
   // only first one is selected and 2nd ignored
   // if (bmp280_set_pressure_temperature_oversampling(&bmp280, BMP280_OVERSAMPLING_x1, BMP280_OVERSAMPLING_x1))
   // {
-  //   printf("F3\n");
+  //   DPRINTF("F3\n");
   // }
 
   if (bmp280_set_pressure_oversampling(bmp280, BMP280_OVERSAMPLING_x1))
   {
-    // printf("F3\n");
+    // DPRINTF("F3\n");
     return 4;
   }
 
@@ -49,7 +49,7 @@ static uint8_t sensor_bmp280_probe(any_sensor_t *ctx)
 
   if (bmp280_set_temperatue_oversampling(bmp280, BMP280_OVERSAMPLING_x1))
   {
-    // printf("F4\n");
+    // DPRINTF("F4\n");
     return 5;
   }
 
@@ -75,8 +75,8 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, temperature_t *out_t, pr
 
 #if 1
 	#ifdef DRIVER_BMP280_WITH_INT
-    printf("T=%ld\n", t);
-    printf("P=%lu\n", p);
+    DPRINTF("T=%ld\n", t);
+    DPRINTF("P=%lu\n", p);
   #else
     *out_t = fl2fpt(t);
     *out_p = fl2fpt_q17(p);
