@@ -3,7 +3,9 @@
 #include "bmp280.h"
 #include "common_driver.h"
 #include "debug.h"
+#include "ens160.h"
 #include "ens210.h"
+#include "adt7410.h"
 #include "hdc1080.h"
 #include "packet.h"
 #include "shtxx.h"
@@ -109,6 +111,10 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_SHTC3, &sensor_factory_SHTC3},
   {SENSOR_MCP9808, &sensor_factory_MCP9808},
   {SENSOR_ENS210, &sensor_factory_ENS210},
+  {SENSOR_ADT7410, &sensor_factory_ADT7410},
+  #endif
+  #ifdef EXPERIMENTAL_ENS160
+  {SENSOR_ENS160, &sensor_factory_ENS160},
   #endif
 };
 

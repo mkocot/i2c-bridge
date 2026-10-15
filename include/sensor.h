@@ -52,6 +52,10 @@ typedef enum
   OBTAIN_PRESSURE = 1 << 1,
   OBTAIN_HUMIDITY = 1 << 2,
 
+  /* print-only result: the sensor's wrapper logs the values itself, none of
+     the packet encoding branches below match it */
+  OBTAIN_GAS = 1 << 3,
+
   /* aliases */
   OBTAIN_TH = OBTAIN_TEMPERATURE | OBTAIN_HUMIDITY,
   OBTAIN_TP = OBTAIN_TEMPERATURE | OBTAIN_PRESSURE,

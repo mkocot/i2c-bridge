@@ -75,3 +75,11 @@
 	path = lib/ens210
 	url = git@github.com:mkocot/ens210.git
 	branch = feat/configurable-debug
+[submodule "lib/adt7410"]
+	path = lib/adt7410
+	url = git@github.com:mkocot/adt7410.git
+	branch = master
+[submodule "lib/ens160"]
+	path = lib/ens160
+	url = git@github.com:mkocot/ens160.git
+	branch = feat/configurable-debug
