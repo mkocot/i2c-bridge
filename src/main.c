@@ -1009,6 +1009,8 @@ void acquire_pt100()
 {
   if (max31865_single_read(&max31865, &tmp_raw_temperature16, NULL) == 0)
   {
+    /* sensor sleep: VBIAS latches after the conversion; clear it between reads */
+    max31865_set_vbias(&max31865, MAX31865_BOOL_FALSE);
     packet_put_reading(&packet, PACKET_BANK_PT100, 0, OBTAIN_TEMPERATURE, tmp_raw_temperature16);
     DPRINTF("pt100 reading ok: %d (raw)\n", tmp_raw_temperature16);
   }
