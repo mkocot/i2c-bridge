@@ -18,11 +18,10 @@ static htu31d_handle_t htu31d;
 
 static inline fpt htu31d_t_fpt(uint16_t val) {
     #if 1
-    // 0.010492 0.000332
     fpt as_fpt = val;
     // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 15));
-    // +166 is magic adjustement
-    as_fpt = fpt_mul(as_fpt, i2fpt(165) + 166);
+    // B*2^32/65535 = i2fpt(B) + B for the /65535 family (65535 = 2^16 - 1)
+    as_fpt = fpt_mul(as_fpt, i2fpt(165) + 165);
     #else
     fpt as_fpt = i2fpt(val);
     // 0.079309 0.002472
@@ -37,14 +36,14 @@ static inline fpt htu31d_t_fpt(uint16_t val) {
 
 static inline fpt htu21d_t_fpt(uint16_t val) {
     fpt as_fpt = val;
-    // +1 reduces maximum error from 0.000031 to 0.000023
-    as_fpt = fpt_mul(as_fpt, fl2fpt(175.72f) + 1);
+    // B*2^32/65536 = fl2fpt(B) for the /65536 family (exact)
+    as_fpt = fpt_mul(as_fpt, fl2fpt(175.72f));
     as_fpt = fpt_sub(as_fpt, fl2fpt(46.85f));
 
     return as_fpt;
 }
 
-static inline float htu21d_h_fpt(uint16_t val) {
+static inline fpt htu21d_h_fpt(uint16_t val) {
     fpt as_fpt = val;
     as_fpt = fpt_mul(as_fpt, i2fpt(125));
     as_fpt = fpt_sub(as_fpt, i2fpt(6));

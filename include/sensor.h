@@ -176,10 +176,14 @@ static inline fpt fpt_div_const(fpt A, fpt B)
 }
 
 /* FROM and TO must be compile-time constants of i2fpt form (multiples of
- * 2^16): fpt_div_const is 32-bit-only and exact for those divisors. */
+ * 2^16): fpt_div_const is 32-bit-only and exact for those divisors.
+ * wire = dividend*FPT_ONE/Q_RANGE, so the Q_RANGE/(2*FPT_ONE) pre-bias
+ * makes the truncating division round to nearest instead of toward zero
+ * and halves the final error (see conv_test.c). */
 #define QUANTIZE_Q(FROM, TO, BYTES, STORAGE, VALUE) \
   (STORAGE)CLAMP_TO_MAX(fpt_div_const( \
-    fpt_sub(MINMAX((FROM), (TO), (VALUE)), (FROM)), \
+    fpt_sub(MINMAX((FROM), (TO), (VALUE)), (FROM)) \
+      + Q_RANGE((FROM), (TO)) / (FPT_ONE * 2), \
     Q_RANGE((FROM), (TO)) \
   ), (BYTES))
 

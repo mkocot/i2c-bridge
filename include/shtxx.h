@@ -15,8 +15,8 @@ static inline fpt shtxx_t_fpt(uint16_t val) {
     fpt as_fpt = val;
     // 0.030727 0.001053
     // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 5));
-    // NOTE(m): Why using +176 improves accuracy?
-    as_fpt = fpt_mul(as_fpt, i2fpt(175) + 176);
+    // B*2^32/65535 = i2fpt(B) + B for the /65535 family (65535 = 2^16 - 1)
+    as_fpt = fpt_mul(as_fpt, i2fpt(175) + 175);
     #else
     // 0.084133 0.002625
     as_fpt = fpt_div(as_fpt, i2fpt(65535));

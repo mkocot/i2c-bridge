@@ -15,8 +15,8 @@ static inline fpt hdc1080_t_fpt(uint16_t val) {
     // 0.010492 0.000332
     fpt as_fpt = val;
     // as_fpt = fpt_div(as_fpt, i2fpt(65535 / 15));
-    // +166 is magic adjustement
-    as_fpt = fpt_mul(as_fpt, i2fpt(165) + 166);
+    // B*2^32/65536 = i2fpt(B) for the /65536 family (exact)
+    as_fpt = fpt_mul(as_fpt, i2fpt(165));
     #else
     fpt as_fpt = i2fpt(val);
     // 0.079309 0.002472
