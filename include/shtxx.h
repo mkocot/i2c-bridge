@@ -62,7 +62,9 @@ static uint8_t sensor_sht3x_iic_addr16_read(uint8_t addr, uint16_t reg, uint8_t 
     case 0x24: /* single read without clock stretching */
       /* fallthrough */
     case 0x2C: /* single read with clock stretching */
-      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 15);
+      /* TIMING: SHT3x-DIS max measurement duration is 15 ms
+         (high repeatability, DS March 2017 v4 Table 4) */
+      ret = i2c_read_reg_delay(&i2c, reg, buf, len, 20);
       break;
     case 0xE0: /* sht35_continuous_read */
       /* fallthrough */

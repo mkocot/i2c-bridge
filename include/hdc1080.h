@@ -110,7 +110,9 @@ static uint8_t sensor_hdc1080_iic_read_with_wait(uint8_t addr, uint8_t reg, uint
             case HDC1080_HUMIDITY_RESOLUTION_14_BIT:
             /* fallthrough */
             default:
-                delay = 7;
+                /* TIMING: RH 14-bit conversion typ is 6.5 ms, no max published
+                   (HDC1080 DS electrical characteristics) */
+                delay = 10;
                 break;
         }
     }

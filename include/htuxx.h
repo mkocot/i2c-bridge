@@ -251,7 +251,6 @@ static uint8_t htu_read_with_scl(uint8_t addr, uint8_t reg, uint8_t *buf, uint16
         reg = 0xF3;
     }
 
-    DPRINTF("HTU: a=%02X r=%02X l=%d\n", addr, reg, len);
     return libdriver_iic_addr_read_delay(addr, reg, buf, len, ms);
 }
 
