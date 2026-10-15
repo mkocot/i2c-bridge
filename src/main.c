@@ -3,6 +3,7 @@
 #include "bmp280.h"
 #include "common_driver.h"
 #include "debug.h"
+#include "ens210.h"
 #include "hdc1080.h"
 #include "packet.h"
 #include "shtxx.h"
@@ -10,6 +11,7 @@
 #include "si7021.h"
 #include "htuxx.h"
 #include "mcp9808.h"
+#include "max31865.h"
 #include "wtocol.h"
 #include "sleep.h"
 
@@ -19,10 +21,47 @@
 
 #include <lib_i2c.h>
 #include <driver_tca9548a.h>
-#include <driver_max31865.h>
 
 /* for debug */
 #include <driver_bme280.h>
+
+
+#define CALCULATED_HPRE_DIV ((((HSI_VALUE) / (FUNCONF_SYSTEM_CORE_CLOCK)) - 1) << 4)
+
+#if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
+# if HSI_VALUE / ((CALCULATED_HPRE_DIV >> 4) + 1) != FUNCONF_SYSTEM_CORE_CLOCK
+#   error Requested clock is not multiplication or division of 24MHz
+# endif
+# if CALCULATED_HPRE_DIV & ~0xF0
+#   error Expected system core clock is too low
+# endif
+#endif
+
+#define DEBUG_DATA0_ADDRESS ((volatile uint32_t *)0xE00000F4)
+#define TCA9548A_RESET_PIN  (PC4)
+#define HC12_SET_PIN        (PD6)
+/* HC12_CMD_SETTLE_MS: SET low to first AT byte. The manual's 40ms was verified
+ * failing (AT+SLEEP ignored: no OK+SLEEP, module stays awake); 150ms verified
+ * working (LA: OK+SLEEP received). */
+#ifndef HC12_CMD_SETTLE_MS
+#define HC12_CMD_SETTLE_MS (150)
+#endif
+
+#ifndef LOOP_WAIT
+#define LOOP_WAIT          (60000 * 5)
+#endif
+
+/* Set UART baud rate here */
+#define UART_BR            (9600)
+#define UART_SIMPLEX       (1)
+#define UART_DUPLEX        (2)
+#define RX_BUF_LEN 16 // size of receive circular buffer
+
+u8 rx_buf[RX_BUF_LEN] = {0}; // DMA receive buffer for incoming data
+u8 cmd_buf[RX_BUF_LEN] = {0}; // buffer for complete command strings
+
+#define USART_MODE UART_SIMPLEX
+
 
 
 /* get maximum bytes required per struct */
@@ -69,8 +108,12 @@ static supported_sensor_t supported_sensors[] = {
   {SENSOR_SHT4X, &sensor_factory_SHT4X},
   {SENSOR_SHTC3, &sensor_factory_SHTC3},
   {SENSOR_MCP9808, &sensor_factory_MCP9808},
+  {SENSOR_ENS210, &sensor_factory_ENS210},
   #endif
 };
+
+static void dma_uart_tx(const void *data, size_t len);
+static void dma_uart_tx_wait(void);
 
 #define supported_sensors_length (sizeof(supported_sensors) / sizeof(supported_sensors[0]))
 
@@ -83,12 +126,6 @@ static uint8_t arena_pool[128];
 static arena_t sensor_arena = ARENA_INIT(arena_pool, sizeof(arena_pool));
 
 static packet_t packet;
-
-/* 
- * single SPI connected sensor
- * just output "raw" reading and do convoluted conversion on received side
- */
-static max31865_handle_t max31865 = {0};
 
 /* single I2C multiplexer 
  * Reset on PC4 (pin 14)
@@ -106,94 +143,6 @@ bank_t banks[BANKS_COUNT] = {
 
 static void loop();
 
-/* better name for this, not "init" per se, more like create? */
-static uint8_t init_pt100_driver()
-{
-  DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
-  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, debug_print);
-  DRIVER_MAX31865_LINK_DELAY_MS(&max31865, libdriver_delay_ms);
-  DRIVER_MAX31865_LINK_SPI_DEINIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_INIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
-  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, &libdriver_spi_write);
-
-  return 0;
-}
-
-static uint8_t init_pt100()
-{
-  init_pt100_driver();
-
-  DPRINTF("SPI init\n");
-
-  spi_init_t cfg = {
-    .byte_order = SPI_MSB_FIRST,
-    .frame_size = SPI_FRAME_8BITS,
-    .mode = SPI_MODE1, // 1 or 3
-    .nss_pin = PC0,
-  };
-
-
-
-  if (spi_init(&spi, &cfg) != SPI_ERR_OK)
-  {
-    DPRINTF("SPI init failed\n");
-
-    return 1;
-  }
-
-  uint8_t err;
-  if ((err = max31865_init(&max31865)))
-  {
-    DPRINTF("PT100 init failed: %d\n", err);
-    return err;
-  }
-
-  if ((err = max31865_set_fault_detection_cycle_control(&max31865, MAX31865_FAULT_DETECTION_CYCLE_CONTROL_NO_ACTION)))
-  {
-    DPRINTF("PT100 sfdcc: %d\n", err);
-    return err;
-  }
-  /* we are using manual fault check, */
-  #if 0
-  max31865_set_high_fault_threshold
-  max31865_set_low_fault_threshold
-  #endif
-
-  /* should not matter at all, it's battery powered device */
-  #if 0
-  max31865_set_filter_select(&max31865, MAX31865_FILTER_SELECT_50HZ);
-  #endif
-
-
-  /* required when fetching temperature directly, debug only */
-  if ((err = max31865_set_reference_resistor(&max31865, 430.0f)))
-  {
-    DPRINTF("reference fail\n");
-    return err;
-  }
-  if ((err = max31865_set_resistor(&max31865, MAX31865_RESISTOR_100PT)))
-  {
-    DPRINTF("resistor failed\n");
-    return err;
-  }
-
-  /* ensure voltage is not enabled by default, it might be on when only MCU has gone
-   * through power cycle
-   */
-  if ((err = max31865_set_vbias(&max31865, MAX31865_BOOL_FALSE)))
-  {
-    DPRINTF("vbias failed\n");
-    return err;
-  }
-
-  if ((err = max31865_set_wire(&max31865, MAX31865_WIRE_3)))
-  {
-    DPRINTF("wire failed\n");
-  }
-
-  return err;
-}
 
 void spi_fun2(void)
 {
@@ -258,290 +207,6 @@ void spi_fun2(void)
   }
 }
 
-void spi_fun(void)
-{
-
-  // TODO(m)
-  // Bitbank mode 1 and 3?
-
-  // in spi config put PIN->HIGH before configuration
-
-  // PIN -> LOW
-  // delay (4x nop)
-  // SPIN_SEND
-  // delay_us(9)
-  // PIN->HIGH
-  // delay (4x nop)
-
-  DRIVER_MAX31865_LINK_INIT(&max31865, max31865_handle_t);
-  DRIVER_MAX31865_LINK_DEBUG_PRINT(&max31865, debug_print);
-  DRIVER_MAX31865_LINK_DELAY_MS(&max31865, libdriver_delay_ms);
-  DRIVER_MAX31865_LINK_SPI_DEINIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_INIT(&max31865, libdriver_nop_void);
-  DRIVER_MAX31865_LINK_SPI_READ(&max31865, libdriver_spi_read);
-  DRIVER_MAX31865_LINK_SPI_WRITE(&max31865, libdriver_spi_write);
-
-  #if 1
-  spi_init_t cfg = {
-    .byte_order = SPI_MSB_FIRST,
-    .frame_size = SPI_FRAME_8BITS,
-    .mode = SPI_MODE1, // 1 or 3
-    .nss_pin = PC0,
-  };
-
-  DPRINTF("SPI init\n");
-
-
-  if (spi_init(&spi, &cfg) != SPI_ERR_OK)
-  {
-    DPRINTF("SPI init failed\n");
-  }
-
-  // init_pt100();
-
-  spi_err_t spi_err;
-  while(1) {
-    DPRINTF("check init\n");
-    if (!max31865.inited)
-    {
-      if ((spi_err = max31865_init(&max31865)))
-      {
-        DPRINTF("F: %d\n", (int)spi_err);
-      }
-      else
-      {
-        DPRINTF("I\n");
-        if (max31865_set_wire(&max31865, MAX31865_WIRE_3)) {
-          DPRINTF("F1\n");
-        }
-        if (max31865_set_fault_detection_cycle_control(&max31865, MAX31865_FAULT_DETECTION_CYCLE_CONTROL_NO_ACTION))
-        {
-          DPRINTF("F2\n");
-        }
-        if (max31865_set_filter_select(&max31865, MAX31865_FILTER_SELECT_50HZ)) {
-          DPRINTF("F3\n");
-        }
-        if (max31865_set_resistor(&max31865, MAX31865_RESISTOR_100PT)) {
-          DPRINTF("F4\n");
-        }
-        if (max31865_set_vbias(&max31865, MAX31865_BOOL_FALSE)) {
-          DPRINTF("F5\n");
-        }
-        if (max31865_set_reference_resistor(&max31865, 430)) {
-          DPRINTF("F6\n");
-        }
-      }
-    }
-    else
-    {
-      DPRINTF("Already done\n");
-      static max31865_wire_t wire;
-      max31865_get_wire(&max31865, &wire);
-      DPRINTF("wire: %d\n", wire);
-      // max31865_set_wire(&max31865, MAX31865_WIRE_3);
-
-      if (max31865_single_read(&max31865, &tmp_raw_temperature16, &tmp_temperature)) {
-        DPRINTF("T: F\n");
-      } else {
-      DPRINTF("T: %d (RAW: %d)\n", (int)tmp_temperature, tmp_raw_temperature16);
-      }
-    }
-
-    Delay_Ms(2000);
-  }
-
-  return;
-  #endif
-
-  #if 0
-
-
-  SPI_init();
-
-  while(1) {
-    uint64_t cycles = SysTick->CNT;
-
-    SPI_begin_8();
-
-    uint8_t chip_id = SPI_transfer_8(0xD0);
-    chip_id = SPI_transfer_8(0x00); /* dummy read */
-
-    SPI_end();
-
-    uint64_t elapsed = SysTick->CNT - cycles;
-
-    DPRINTF("Chip id: %X (%04d)\n", chip_id, (int)elapsed);
-
-    Delay_Ms(2000);
-  }
-
-  return;
-  #endif
-  #if 0
-  // SS: 1
-  // begin()
-  // SS: 0
-  // write(0xD0)
-  // transfer(0xFF) // aka read
-  // SS: 1
-  // end()
-  // SS: 1
-
-  DPRINTF("0: SPI STATR: %X\n", SPI1->STATR);
-  // TODO ? Software mode is not working as expected and no data is received
-  // from sensor. Hardware works OK, but requires pin PC1 or PC0 (alternate)
-  spi_init(&spi, 0, SPI_MODE0, 8, 1);
-  DPRINTF("1: SPI STATR: %X\n", SPI1->STATR);
-  // Enable SPI
-  // SPI1->CTLR1 |= SPI_CTLR1_SPE;
-  // DPRINTF("2: SPI STATR: %X\n", SPI1->STATR);
-  // // 
-  // // Enable SPI
-  // while(1) {
-  //   DPRINTF("ENABLE\n");
-  //   SPI1->CTLR1 |= SPI_CTLR1_SPE;
-  //   Delay_Ms(4000);
-  //   DPRINTF("DISABLE\n");
-  //   SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
-  //   Delay_Ms(4000);
-  // }
-
-  Delay_Ms(1000);
-
-  // spi_recv8(0xFF);
-  volatile uint16_t dummy;
-  while(1)
-  {
-
-    #if 1
-    // SPI1->CTLR1 |= SPI_CTLR1_SPE;
-    // DPRINTF("START: SPI STATR: %X\n", SPI1->STATR);
-    // Delay_Ms(100);
-    // ensure nothing is pending?
-    // DPRINTF("Wait for Transmit buffer empty\n");
-    // while(!(SPI1->STATR & SPI_STATR_TXE))
-    // {
-    //   __NOP();
-    // }
-
-    // SPI1->DATAR = 0xD0;
-
-    // // Delay_Ms(100);
-    // // wait for completion
-    // DPRINTF("Wait for transfer completion\n");
-    // while(!(SPI1->STATR & SPI_STATR_TXE))
-    // {
-    //   __NOP();
-    // }
-    // // SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
-    // // SPI1->CTLR1 |= SPI_CTLR1_SPE;
-
-    // // write dummy data and then read response for first command
-    // while((SPI1->STATR & SPI_STATR_BSY) == SPI_STATR_BSY){};
-
-    //begin transaction
-
-    #if 1
-    uint8_t resp = 0xFF;
-    libdriver_spi_read(0xD0, &resp, 1);
-    DPRINTF("R: %X\n", resp);
-    #elif 1
-    uint8_t reg = 0xD0;
-    spi_send_receive(&reg, 1, &reg, 1);
-    DPRINTF("R: %X\n", reg);
-    #else
-
-    spi_begin_transaction(&spi);
-
-    spi_send8(0xD0);
-
-    // wait for data?
-    DPRINTF("Wait for data receive\n");
-    while (!(SPI1->STATR & SPI_STATR_RXNE))
-    {
-      __NOP();
-    }
-    // Delay_Ms(200);
-    DPRINTF("X: %X\n", SPI1->DATAR);
-
-    // Send dommy data and wait for response of 1 byte
-    spi_send8(0x00);
-    DPRINTF("Wait for data receive (real)\n");
-    while (!(SPI1->STATR & SPI_STATR_RXNE))
-    {
-      __NOP();
-    }
-    // Delay_Ms(200);
-    DPRINTF("R: %X\n", SPI1->DATAR);
-    spi_end_transaction(&spi);
-    #endif
-
-
-    #else
-
-    // spi_send8(0xD0);
-    DPRINTF("R: %X\n", spi_recv8(0xD0));
-    // SPI1->CTLR1 &= ~SPI_CTLR1_SPE;
-    // DPRINTF("STOP: SPI STATR: %X\n", SPI1->STATR);
-    #endif
-
-    // end transaction
-
-    Delay_Ms(4000);
-  }
-#endif
-
-  static bme280_handle_t bme;
-  DRIVER_BME280_LINK_INIT(&bme, bme280_handle_t);
-  DRIVER_BME280_LINK_DEBUG_PRINT(&bme, debug_print);
-  DRIVER_BME280_LINK_DELAY_MS(&bme, libdriver_delay_ms);
-  DRIVER_BME280_LINK_SPI_DEINIT(&bme, libdriver_nop_void);
-  DRIVER_BME280_LINK_SPI_INIT(&bme, libdriver_nop_void);
-  DRIVER_BME280_LINK_SPI_READ(&bme, libdriver_spi_read);
-  DRIVER_BME280_LINK_SPI_WRITE(&bme, libdriver_spi_write);
-  // not used but required
-  DRIVER_BME280_LINK_IIC_DEINIT(&bme, libdriver_nop_void);
-  DRIVER_BME280_LINK_IIC_INIT(&bme, libdriver_nop_void);
-  DRIVER_BME280_LINK_IIC_READ(&bme, libdriver_iic_addr_read);
-  DRIVER_BME280_LINK_IIC_WRITE(&bme, libdriver_iic_addr_write);
-
-  bme280_set_interface(&bme, BME280_INTERFACE_SPI);
-
-  spi_init(&spi, &cfg);
-
-  DPRINTF("I = %d\n", bme.inited);
-
-  while(1)
-  {
-    if (!bme.inited)
-    {
-      if (bme280_init(&bme))
-      {
-        DPRINTF("F\n");
-      }
-      else
-      {
-        DPRINTF("I\n");
-        bme280_set_mode(&bme, BME280_MODE_FORCED);
-        bme280_set_filter(&bme, BME280_FILTER_OFF);
-        bme280_set_humidity_oversampling(&bme, BME280_OVERSAMPLING_x1);
-        bme280_set_temperatue_oversampling(&bme, BME280_OVERSAMPLING_x1);
-        bme280_set_pressure_oversampling(&bme, BME280_OVERSAMPLING_x1);
-      }
-    }
-    else
-    {
-      DPRINTF("Already done\n");
-      uint32_t tr, pr, hr;
-      float t, p, h;
-
-      bme280_read_temperature_pressure_humidity(&bme, &tr, &t, &pr, &p, &hr, &h);
-      DPRINTF("T: %d P: %d H: %d\n", (int)t, (int)p, (int)h);
-    }
-
-    Delay_Ms(1000);
-  }
-}
 
 static inline uint8_t tca9458a_iic_setup()
 {
@@ -589,19 +254,10 @@ static inline uint8_t tca9548a_iic_read(uint8_t *buf, uint16_t len)
   return err;
 }
 
-#define DEBUG_DATA0_ADDRESS ((volatile uint32_t *)0xE00000F4)
-
-
 void i2c_scan_callback(const uint8_t addr)
 {
   DPRINTF("Address: 0x%02X Responded.\n", addr);
 }
-
-static void dma_uart_tx(const void *data, size_t len);
-static void dma_uart_tx_wait(void);
-
-#define TCA9548A_RESET_PIN  (PC4)
-#define HC12_SET_PIN        (PD6)
 
 /* 
  * Enter passthrough mode, but do not skip recommended amount of time
@@ -618,12 +274,6 @@ static void hc12_enter_passthrough()
   Delay_Ms(80); /* test delay, 80: value from manual */
 }
 
-/* HC12_CMD_SETTLE_MS: SET low to first AT byte. The manual's 40ms was verified
- * failing (AT+SLEEP ignored: no OK+SLEEP, module stays awake); 150ms verified
- * working (LA: OK+SLEEP received). */
-#ifndef HC12_CMD_SETTLE_MS
-#define HC12_CMD_SETTLE_MS (150)
-#endif
 
 static void hc12_enter_cmd()
 {
@@ -683,53 +333,35 @@ static void hc12_send_old(const uint8_t *data, size_t len)
 
 static void hc12_send_new(const uint8_t *data, size_t len)
 {
-  #define HC12_PACKET_SIZE (17)
+# define HC12_PACKET_SIZE (17)
 
-      if (len == 0) return;
+  if (len == 0) return;
 
-    DPRINTF("len: %d\n", len);
+  DPRINTF("len: %d\n", len);
 
-    const uint8_t *ptr = data;
-    size_t remaining = len;
+  const uint8_t *ptr = data;
+  size_t remaining = len;
 
-    while (remaining > 0) {
-        // Send either 17 bytes or whatever is left
-        size_t chunk = (remaining >= HC12_PACKET_SIZE) ? HC12_PACKET_SIZE : remaining;
+  while (remaining > 0) {
+      // Send either 17 bytes or whatever is left
+      size_t chunk = (remaining >= HC12_PACKET_SIZE) ? HC12_PACKET_SIZE : remaining;
 
-        dma_uart_tx(ptr, chunk);
+      dma_uart_tx(ptr, chunk);
 
-        // DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
+      // DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
 
-        uint32_t now = SysTick->CNT;
-        dma_uart_tx_wait();
-        now = SysTick->CNT - now;
-        DPRINTF("wait done: %lu ticks\n", now);
+      uint32_t now = SysTick->CNT;
+      dma_uart_tx_wait();
+      now = SysTick->CNT - now;
+      // DPRINTF("wait done: %lu ticks\n", now);
 
-        Delay_Ms(40);
+      Delay_Ms(40);
 
-        ptr += chunk;
-        remaining -= chunk;
-    }
-#undef HC12_PACKET_SIZE
+      ptr += chunk;
+      remaining -= chunk;
+  }
 
-  // DPRINTF("len: %d\n", len);
-  // // RAM: [= ] 11.9% (used 972 bytes from 8192 bytes)
-  // // Flash: [==== ] 44.7% (used 28376 bytes from 63488 bytes)
-  // size_t packet_chunks = (len + 15) >> 4;
-  // for (size_t i = 0; i < packet_chunks; ++i) {
-  //   const size_t offset = i * 16;
-  //   const size_t chunk = (i == packet_chunks - 1) ? len - offset : 16;
-
-  //   dma_uart_tx(data + offset, chunk);
-
-  //   DPRINTF("%lu: packet dma request done: %u\n", SysTick->CNT, chunk);
-
-  //   dma_uart_tx_wait();
-
-  //   DPRINTF("%lu: wait done\n", SysTick->CNT);
-
-  //   Delay_Ms(40);
-  // }                                                                                                            
+# undef HC12_PACKET_SIZE
 }  
 
 #define hc12_send(data, len) hc12_send_new(data, len)
@@ -974,173 +606,6 @@ static uint8_t bank_check_new(bank_t *bank)
   return 0;
 }
 
-
-
-#define RX_BUF_LEN 16 // size of receive circular buffer
-
-u8 rx_buf[RX_BUF_LEN] = {0}; // DMA receive buffer for incoming data
-u8 cmd_buf[RX_BUF_LEN] = {0}; // buffer for complete command strings
-
-void uart_fun()
-{
-  /*
-   |USART pins| Configuration                | GPIO configuration
-   +==========+==============================+=================================+
-   |USARTx_TX | Full-duplex mode             | Push-pull alternate outputs     |
-   |          +------------------------------|---------------------------------+
-   |          | Half-duplex synchronous mode | Open-drain alternate outputs    |
-   +----------+------------------------------+---------------------------------+
-   |USARTx_RX | Full-duplex mode             | Floating input or pull-up input |
-   |          +------------------------------+---------------------------------+
-   |          | Half-duplex synchronous mode | Not used                        |
-   +----------+------------------------------+---------------------------------+
-  */
-
-  /*
-  Role/Mapping  0000 Default  0001 0010 0011 0100 0101 0110 0111 1000 1001
-  USART1_TX     PD5           PD6  PD0  PC0  PD1  PB3  PC5  PB5  PA0  PA0
-  USART1_RX     PD6           PD5  PD1  PC1  PB3  PD1  PC6  PB6  PA1  PC4
-  USART1_CTS    PD3           PC6  PC3  PC6  PD7  PD7  PC7  PC7  PD2  PD5
-  USART1_RTS    PC2           PC7  PC2  PC7  PA5  PA5  PB4  PB4  PD3  PD4
-*/
-/*
-  1   PD4     PD3   20
-  2   PD5     PD2   19
-  3   PD6     PD1   18
-  4   PD7     PC7   17
-  5   PA1     PC6   16
-  6   PA2     PC5   15
-  7   VSS     PC4   14
-  8   PD0     PC3   13
-  9   VDD     PC2   12
-  10  PC0     PC1   11
-*/
-  // Tx: PD5 (2)
-  // Rx: PD6 (3)
-  funGpioInitD();
-	funPinMode( PD5, GPIO_CFGLR_OUT_2Mhz_PP);
-	
-	// enable rx pin
-	USART1->CTLR1 |= USART_CTLR1_RE;
-
-	// enable usart's dma rx requests
-	USART1->CTLR3 |= USART_CTLR3_DMAR;
-
-	// enable dma clock
-	RCC->AHBPCENR |= RCC_DMA1EN;
-
-	// configure dma for UART reception, it should fire on RXNE
-	DMA1_Channel5->MADDR = (u32)&rx_buf;
-	DMA1_Channel5->PADDR = (u32)&USART1->DATAR;
-	DMA1_Channel5->CNTR = RX_BUF_LEN;
-
-	// MEM2MEM: 0 (memory to peripheral)
-	// PL: 0 (low priority since UART is a relatively slow peripheral)
-	// MSIZE/PSIZE: 0 (8-bit)
-	// MINC: 1 (increase memory address)
-	// PINC: 0 (peripheral address remains unchanged)
-	// CIRC: 1 (circular)
-	// DIR: 0 (read from peripheral)
-	// TEIE: 0 (no tx error interrupt)
-	// HTIE: 0 (no half tx interrupt)
-	// TCIE: 0 (no transmission complete interrupt)
-	// EN: 1 (enable DMA)
-	DMA1_Channel5->CFGR = DMA_CFGR1_CIRC | DMA_CFGR1_MINC | DMA_CFGR1_EN;
-
-  while(1)
-	{
-		static u32 tail = 0; // current read position in rx_buf
-		static u32 cmd_end = 0; // end index of current command in rx_buf
-		static u32 cmd_st = 0; // start index of current command in rx_buf
-
-		// calculate head position based on DMA counter (modulo when DMA1_Channel5->CNTR = 0)
-		u32 head = (RX_BUF_LEN - DMA1_Channel5->CNTR) % RX_BUF_LEN; // current write position in rx_buf
-    
-    // if (head) {
-    //   DPRINTF("HEAD: %lu\n", head);
-    // }
-		
-		// process new bytes in rx_buf. when a newline character is detected, the command is copied to cmd_buf
-		while (tail != head)
-		{
-			if ( rx_buf[tail] == '\n' ) 
-			{
-        DPRINTF("%s\n", rx_buf);
-				cmd_end = tail;
-				u32 cmd_i = 0; // carret position in cmd_buf
-				if (cmd_end > cmd_st)
-				{
-					for (u32 rx_i = cmd_st; rx_i < cmd_end + 1; rx_i++, cmd_i++) {
-						cmd_buf[cmd_i] = rx_buf[rx_i];
-					}
-				} else if (cmd_st > cmd_end) { // handle wrap around
-					for (u32 rx_i = cmd_st; rx_i < RX_BUF_LEN; rx_i++, cmd_i++) {
-						cmd_buf[cmd_i] = rx_buf[rx_i];
-					}
-					for (u32 rx_i = 0; rx_i < cmd_end + 1; rx_i++, cmd_i++) {
-						cmd_buf[cmd_i] = rx_buf[rx_i];
-					}
-				}
-
-				// null terminate
-				cmd_buf[cmd_i] = '\0';
-
-        DPRINTF("'%s'\n", cmd_buf);
-
-				// update start position for next command
-				cmd_st = (cmd_end + 1) % RX_BUF_LEN;
-			}
-
-			// move to next position 
-			tail = (tail+1) % RX_BUF_LEN;
-		}
-	}
-}
-
-
-#define CALCULATED_HPRE_DIV ((((HSI_VALUE) / (FUNCONF_SYSTEM_CORE_CLOCK)) - 1) << 4)
-
-#if HSI_VALUE * FUNCONF_PLL_MULTIPLIER != FUNCONF_SYSTEM_CORE_CLOCK
-# if HSI_VALUE / ((CALCULATED_HPRE_DIV >> 4) + 1) != FUNCONF_SYSTEM_CORE_CLOCK
-#   error Requested clock is not multiplication or division of 24MHz
-# endif
-# if CALCULATED_HPRE_DIV & ~0xF0
-#   error Expected system core clock is too low
-# endif
-#endif
-
-
-// Set UART baud rate here
-// #define UART_BR 115200
-#define UART_BR 9600
-
-// DMA transfer completion interrupt. It will fire when the DMA transfer is
-// complete. We use it just to blink the LED
-// __attribute__((interrupt)) __attribute__((section(".srodata")))
-// void DMA1_Channel4_IRQHandler(void)
-// {
-// 	// Clear flag
-// 	DMA1->INTFCR |= DMA_CTCIF4;
-
-// 	// Blink LED
-// 	// GPIOD->OUTDR ^= 1<<LED_PIN
-// }
-
-// static void led_setup(void)
-// {
-// 	RCC->APB2PCENR = RCC_APB2Periph_GPIOD;
-// 	GPIOD->CFGLR =
-// 		((GPIO_CNF_IN_PUPD)<<(4*1)) | // Keep SWIO enabled.
-// 		(GPIO_Speed_2MHz | GPIO_CNF_OUT_PP)<<(4*LED_PIN);
-
-// 	// LED ON
-// 	GPIOD->BSHR = 1<<LED_PIN;
-// }
-#define UART_SIMPLEX (1)
-#define UART_DUPLEX (2)
-
-#define USART_MODE UART_SIMPLEX
-
 static void uart_setup(void)
 {
 #if USART_MODE == UART_DUPLEX
@@ -1383,46 +848,6 @@ int main()
   uart_setup();
   dma_uart_setup();
 
-
-// #define W_TEST_USART
-#ifdef W_TEST_USART
-  DPRINTF("poke\n");
-  static const char message[] = "Hello World!\r\n";
-	while (1)
-	{
-    DPRINTF("touch\n");
-    // dma_uart_rx();
-		dma_uart_tx(message, sizeof(message) - 1);
-		Delay_Ms(1000);
-  }
-
-  char *text = "HelloWorld\n";
-  while (1) {
-    DPRINTF("emit to uart\n");
-    char *buf = text;
-    for (int i = 0; i < strlen(text);++i) {
-      while( !(USART1->STATR & USART_FLAG_TC));
-      Delay_Ms(2);
-      USART1->DATAR = *buf++;
-    }
-    Delay_Ms(1000);
-  }
-#endif
-  // #define RCC_CSS 0 /* disable */
-  // #define HSEBYP 0 /* HSE bypass (disable) */
-
-  // #define BASE_CFGR0 RCC_HPRE_DIV1 | RCC_PPRE2_DIV1 | RCC_PPRE1_DIV1
-  // #define BASE_CTLR	(((FUNCONF_HSITRIM) << 3) | RCC_HSION | HSEBYP | RCC_CSS)
-  // RCC->CFGR0 = BASE_CFGR0;
-  // RCC->CTLR  = BASE_CTLR | RCC_HSION | RCC_PLLON; 			// Use HSI, enable PLL.
-
-  // uart_fun();
-  // asdf();
-
-  // spi_fun();
-  // spi_fun2();
-
-
   initializeGPIO();
 
   /* disable radio ASAP */
@@ -1441,7 +866,7 @@ int main()
   }
 
   /* PT100 will configure SPI for itself */
-  init_pt100();
+  sensor_max31865_init();
 
   DRIVER_TCA9548A_LINK_INIT(&tca9548a);
   DRIVER_TCA9548A_LINK_DELAY_MS(&tca9548a, libdriver_delay_ms);
@@ -1465,19 +890,6 @@ int main()
   }
 
   Delay_Ms(250);
-
-  #if 0
-  const uint32_t oldtout = i2c.tout;
-  i2c.tout >> 2;
-  while (1)
-  {
-    DPRINTF("Scan begin\n");
-    i2c_scan(i2c_scan_callback);
-    Delay_Ms(1000);
-    break;
-  }
-  i2c.tout = oldtout;
-  #endif
 
   /* prepare packet */
   hc12_wire_t *hdr = (hc12_wire_t*) packet_pool;
@@ -1660,8 +1072,8 @@ void loop()
 
   end:
 #if MCU_SLEEP
-  sleep_for(30000);
+  sleep_for(LOOP_WAIT);
 #else
-  Delay_Ms(30000);
+  Delay_Ms(LOOP_WAIT);
 #endif
 }

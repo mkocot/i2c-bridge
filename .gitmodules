@@ -70,3 +70,8 @@
 	path = lib/si7021
 	url = git@github.com:mkocot/si7021.git
 	branch = feat/configurable-debug
+
+[submodule "lib/ens210"]
+	path = lib/ens210
+	url = git@github.com:mkocot/ens210.git
+	branch = feat/configurable-debug
