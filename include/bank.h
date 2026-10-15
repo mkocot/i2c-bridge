@@ -19,6 +19,7 @@ typedef enum
   SENSOR_SI7021 = 1 << 8,
   SENSOR_HDC1080 = 1 << 9,
   SENSOR_MCP9808 = 1 << 10,
+  SENSOR_ENS210 = 1 << 11,
 } sensor_t;
 
 static const char* sensor_to_str(sensor_t sensor)
@@ -49,6 +50,8 @@ static const char* sensor_to_str(sensor_t sensor)
       return "hdc1080";
     case SENSOR_MCP9808:
       return "mcp9808";
+    case SENSOR_ENS210:
+      return "ens210";
     default:
       return "unknown";
   }
