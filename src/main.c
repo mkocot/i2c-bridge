@@ -46,18 +46,18 @@
  * failing (AT+SLEEP ignored: no OK+SLEEP, module stays awake); 150ms verified
  * working (LA: OK+SLEEP received). */
 #ifndef HC12_CMD_SETTLE_MS
-#define HC12_CMD_SETTLE_MS (150)
+#define HC12_CMD_SETTLE_MS  (150)
 #endif
 
 #ifndef LOOP_WAIT
-#define LOOP_WAIT          (60000 * 5)
+#define LOOP_WAIT           (60000 * 5)
 #endif
 
 /* Set UART baud rate here */
-#define UART_BR            (9600)
-#define UART_SIMPLEX       (1)
-#define UART_DUPLEX        (2)
-#define RX_BUF_LEN 16 // size of receive circular buffer
+#define UART_BR             (9600)
+#define UART_SIMPLEX        (1)
+#define UART_DUPLEX         (2)
+#define RX_BUF_LEN          (16) /* size of receive circular buffer */
 
 u8 rx_buf[RX_BUF_LEN] = {0}; // DMA receive buffer for incoming data
 u8 cmd_buf[RX_BUF_LEN] = {0}; // buffer for complete command strings
