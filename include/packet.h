@@ -153,6 +153,9 @@ void packet_clear_readings(packet_t *packet)
   packet->pressure_config.count = 0;
   packet->temperature_config.count = 0; 
   packet->temperature_config.has_pt100 = 0;
+  packet->temperature_used_banks.raw = 0;
+  packet->pressure_used_banks.raw = 0;
+  packet->humidity_used_banks.raw = 0;
 }
 
 static uint8_t packet_sensor_readings(const packet_t *packet)
