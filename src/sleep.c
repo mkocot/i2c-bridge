@@ -92,6 +92,8 @@ static uint32_t awu_cal_tick_us(void)
 
 void sleep_for(uint32_t ms)
 {
+  /* Store what IRQ is enabled */
+  uint32_t usart1_irq_was = NVIC_GetStatusIRQ(USART1_IRQn);
   NVIC_DisableIRQ(USART1_IRQn);
 
   // power interface clock and LSI
@@ -234,5 +236,7 @@ void sleep_for(uint32_t ms)
   RCC->RSTSCKR &= ~RCC_LSION;
   RCC->APB1PCENR &= ~RCC_APB1Periph_PWR;
 
-  NVIC_EnableIRQ(USART1_IRQn);
+  if (usart1_irq_was) {
+    NVIC_EnableIRQ(USART1_IRQn);
+  }
 }
