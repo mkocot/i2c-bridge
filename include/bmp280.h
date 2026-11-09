@@ -73,15 +73,12 @@ static obtain_t sensor_bmp280_obtain(any_sensor_t *ctx, temperature_t *out_t, pr
     return OBTAIN_ERROR;
   }
 
-#if 1
-	#ifdef DRIVER_BMP280_WITH_INT
-    DPRINTF("T=%ld\n", t);
-    DPRINTF("P=%lu\n", p);
-  #else
-    *out_t = fl2fpt(t);
-    *out_p = fl2fpt_q17(p);
-  #endif
-
+#ifdef DRIVER_BMP280_WITH_INT
+  *out_t = t;   /* the driver compensates in fpt: Q16.16 degree C */
+  *out_p = p;   /* and Q18.14 Pa */
+#else
+  *out_t = fl2fpt(t);
+  *out_p = fl2fpt_q17(p);
 #endif
 
   return OBTAIN_TP;

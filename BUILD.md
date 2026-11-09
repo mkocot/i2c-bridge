@@ -6,7 +6,7 @@ Build systems
 
     PlatformIO (platformio.ini): firmware, embedded and native tests
     platformio_native.ini: standalone ini with only the native-test env (src_dir=src)
-    Makefile: host-only checks (quant, packet, fsm_test, fsm_fuzz)
+    Makefile: host-only checks (quant, packet, fsm_test, fsm_fuzz, conv_test, bmp280_bench)
     do.sh: one-off check: gcc -Ilib/fptc-lib/src -Ilib test.c
 
 PlatformIO environments
@@ -44,6 +44,11 @@ Tests
     test/test_arena - arena allocator tests
     test/test_packet - packet/CRC8 tests
     make quant | make packet | make fsm_test | make fsm_fuzz - host-only
+    make conv_test - sweep of every raw->fpt converter through QUANTIZE_*/DEQUANTIZE_*
+    make bmp280_bench - the BMP280 driver's fpt compensation vs the datasheet formula,
+        every raw code over 12 temperatures and 4 calibration sets
+    make helpers - after a firmware build: fails if a 64-bit division helper
+        (__divdi3, __udivdi3, ...) got linked into either elf, 1.2 kB each (ADR-0015)
 
 Flashing
 

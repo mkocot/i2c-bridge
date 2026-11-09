@@ -27,7 +27,7 @@ static inline fpt shtxx_t_fpt(uint16_t val) {
     return as_fpt;
 }
 
-static inline float sht4x_h_fpt(uint16_t val) {
+static inline fpt sht4x_h_fpt(uint16_t val) {
     fpt as_fpt = val;
     as_fpt = fpt_mul(as_fpt, i2fpt(125));
     as_fpt = fpt_sub(as_fpt, i2fpt(6));

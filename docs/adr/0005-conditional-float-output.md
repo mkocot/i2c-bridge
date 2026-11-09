@@ -12,6 +12,9 @@ Consequences: with the macro undefined the guarded output parameters are left un
 the wrappers always pass NULL for them; each guarded write is paired with an `#else (void)param;`
 cast. The guard style is uniformly `#ifdef` (no value check). Two drivers are deliberate
 exceptions: bmp280 keeps its own `DRIVER_BMP280_WITH_INT` output-type switch because
-include/bmp280.h consumes its temperature/pressure outputs via fl2fpt, and bme280 is untouched
-(it is not wired into the build). dht11's humidity output is an integer copy with no float
+include/bmp280.h consumes its temperature/pressure outputs, and bme280 is untouched
+(it is not wired into the build). The switch selects the unit type rather than a float-only
+conversion: with the macro the compensation runs entirely in int64 and the outputs are
+already fpt (Q16.16 degC, Q18.14 Pa), so the wrapper stores them without fl2fpt; without it
+the float compensation is unchanged and the wrapper converts (ADR-0015). dht11's humidity output is an integer copy with no float
 math, so it stays unguarded.

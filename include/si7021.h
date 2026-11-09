@@ -6,7 +6,7 @@
 
 #include <driver_si7021.h>
 
-static inline float si7021_h_fpt(uint16_t val) {
+static inline fpt si7021_h_fpt(uint16_t val) {
     fpt as_fpt = val;
     as_fpt = fpt_mul(as_fpt, i2fpt(125));
     as_fpt = fpt_sub(as_fpt, i2fpt(6));
