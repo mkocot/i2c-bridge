@@ -100,19 +100,21 @@ typedef struct supported_sensor_e {
 /* HTU/SI/SHT could share most of it's logic */
 static supported_sensor_t supported_sensors[] = {
   {SENSOR_AHT, &sensor_factory_AHTXX},
-  {SENSOR_BMP280, &sensor_factory_BMP280}, // crashing 003?
+  {SENSOR_BMP280, &sensor_factory_BMP280},
   {SENSOR_HDC1080, &sensor_factory_HDC1080},
   {SENSOR_HTU31D, &sensor_factory_HTU31D},
   {SENSOR_HTU21D, &sensor_factory_HTU21D},
-  {SENSOR_SI7021, &sensor_factory_SI7021},
-  #ifdef CH32V006
   {SENSOR_SHT3X, &sensor_factory_SHT3X},
   {SENSOR_SHT4X, &sensor_factory_SHT4X},
   {SENSOR_SHTC3, &sensor_factory_SHTC3},
-  {SENSOR_MCP9808, &sensor_factory_MCP9808},
-  {SENSOR_ENS210, &sensor_factory_ENS210},
-  {SENSOR_ADT7410, &sensor_factory_ADT7410},
+  {SENSOR_SI7021, &sensor_factory_SI7021},
+
+  #ifdef CH32V006
+  {SENSOR_MCP9808, &sensor_factory_MCP9808}, /* poor quality for outdoor use */
+  {SENSOR_ENS210, &sensor_factory_ENS210}, /* never tested outdoor */
+  {SENSOR_ADT7410, &sensor_factory_ADT7410}, /* never tested outdoor */
   #endif
+
   #ifdef EXPERIMENTAL_ENS160
   {SENSOR_ENS160, &sensor_factory_ENS160},
   #endif
