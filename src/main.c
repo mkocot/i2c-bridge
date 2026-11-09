@@ -342,6 +342,9 @@ static void hc12_send_old(const uint8_t *data, size_t len)
 static void hc12_send_new(const uint8_t *data, size_t len)
 {
 # define HC12_PACKET_SIZE (17)
+  /* the module airs a partial burst (<17 bytes) only after an idle timeout, so
+   * passthrough has to outlive the last chunk by more than that timeout */
+# define HC12_FLUSH_MS (150)
 
   if (len == 0) return;
 
@@ -369,7 +372,10 @@ static void hc12_send_new(const uint8_t *data, size_t len)
       remaining -= chunk;
   }
 
+  Delay_Ms(HC12_FLUSH_MS);
+
 # undef HC12_PACKET_SIZE
+# undef HC12_FLUSH_MS
 }  
 
 #define hc12_send(data, len) hc12_send_new(data, len)
